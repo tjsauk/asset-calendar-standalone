@@ -1,0 +1,53 @@
+* { box-sizing: border-box; }
+button, select, input { font: inherit; }
+.calendar-card { background:#fff; border:1px solid #cbd5e1; border-radius:12px; box-shadow:0 6px 18px rgba(15,23,42,.05); padding:12px; font-family:Inter,system-ui,Arial,sans-serif; color:#0f172a; }
+.calendar-toolbar { display:flex; justify-content:space-between; gap:10px; margin-bottom:10px; flex-wrap:wrap; }
+.calendar-toolbar button,.calendar-toolbar select{ padding:6px 10px; border:1px solid #94a3b8; border-radius:8px; background:#fff; cursor:pointer; font-size:.85rem; }
+.toolbar-left,.toolbar-right,.repeat-inline{ display:flex; gap:8px; flex-wrap:wrap; align-items:center; }
+.repeat-inline input{ width:74px; padding:6px 8px; border:1px solid #94a3b8; border-radius:8px; }
+.repeat-title{ font-weight:700; }
+.period-panel{ background:#f8fafc; border:1px solid #cbd5e1; border-radius:10px; padding:12px; margin-bottom:12px; }
+.period-chip-list{ display:flex; flex-wrap:wrap; gap:8px; }
+.period-chip{ display:inline-flex; align-items:center; gap:8px; padding:6px 8px; border:1px solid #cbd5e1; border-radius:999px; background:#fff; }
+.period-chip.active{ border-color:#2563eb; background:#eff6ff; }
+.period-chip-main{ border:0; background:transparent; display:inline-flex; align-items:center; gap:8px; cursor:pointer; padding:0; }
+.period-chip-meta{ color:#475569; font-size:.82rem; }
+.period-chip-remove{ border:1px solid #cbd5e1; background:#fff; border-radius:999px; width:22px; height:22px; line-height:1; cursor:pointer; color:#475569; }
+.period-status-dot{ width:10px; height:10px; border-radius:999px; display:inline-block; }
+.period-chip.status-good .period-status-dot{ background:#16a34a; }
+.period-chip.status-warning .period-status-dot{ background:#ca8a04; }
+.period-chip.status-error .period-status-dot{ background:#dc2626; }
+.period-chip.status-neutral .period-status-dot{ background:#94a3b8; }
+.week-shell{ display:grid; grid-template-columns:62px repeat(7,1fr); grid-template-rows:42px auto; border:1px solid #94a3b8; border-radius:10px; overflow:hidden; user-select:none; }
+.week-header-spacer{ grid-column:1; grid-row:1; background:#e2e8f0; border-right:1px solid #94a3b8; border-bottom:2px solid #64748b; }
+.week-day-header{ background:#e2e8f0; border-bottom:2px solid #64748b; border-right:1px solid #94a3b8; display:flex; align-items:center; justify-content:center; font-size:12px; font-weight:700; height:42px; }
+.time-column{ grid-column:1; grid-row:2; background:#f8fafc; border-right:2px solid #64748b; }
+.time-cell{ height:16px; border-bottom:1px solid #d0d9e4; font-size:9px; display:flex; align-items:flex-start; justify-content:center; color:#334155; }
+.day-column{ position:relative; grid-row:2; height:384px; border-right:1px solid #94a3b8; background:repeating-linear-gradient(to bottom,transparent 0,transparent 15px,#cbd5e1 15px,#cbd5e1 16px); }
+.day-column.alt{ background-color:#f8fbff; }
+.hour-cell{ display:block; width:100%; height:16px; border:0; padding:0; margin:0; cursor:pointer; background:transparent; }
+.disabled-past{ cursor:not-allowed; }
+.now-line{ position:absolute; left:0; right:0; height:2px; background:#dc2626; z-index:6; pointer-events:none; }
+.now-dot{ position:absolute; left:-3px; top:-4px; width:10px; height:10px; border-radius:999px; background:#dc2626; }
+.reservation-block{ position:absolute; border-radius:4px; color:#fff; font-size:9px; font-weight:700; overflow:hidden; min-width:0; }
+.reservation-block.existing{ opacity:.98; border:3px solid #000; z-index:1; }
+.reservation-block.draft{ border:2px solid #111; cursor:move; z-index:4; }
+.reservation-block.draft.active{ border:0; outline:none; }
+.block-label{ padding:2px 4px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.drag-handle{ position:absolute; left:0; right:0; height:5px; z-index:5; }
+.drag-handle.top{ top:0; cursor:ns-resize; }
+.drag-handle.bottom{ bottom:0; cursor:ns-resize; }
+.month-view{ border:1px solid #000; border-radius:10px; overflow:hidden; background:#fff; }
+.month-grid{ display:grid; grid-template-columns:repeat(7,1fr); border-left:1px solid #000; border-top:1px solid #000; }
+.month-head{ background:#f8fafc; border-right:1px solid #000; border-bottom:1px solid #000; padding:8px; text-align:center; font-size:12px; font-weight:700; }
+.month-cell{ min-height:112px; padding:8px; background:#fff; position:relative; border-right:1px solid #000; border-bottom:1px solid #000; }
+.month-cell-button{ text-align:left; cursor:pointer; appearance:none; -webkit-appearance:none; border-radius:0; }
+.month-date{ font-size:12px; font-weight:700; margin-bottom:8px; position:relative; z-index:3; }
+.month-day-strip{ position:absolute; left:6px; right:6px; top:30px; z-index:0; }
+.month-existing-block{ position:absolute; height:10px; border-radius:3px; opacity:.95; border:1px solid rgba(0,0,0,.18); }
+.month-draft-outline{ position:absolute; left:6px; right:6px; top:28px; bottom:8px; background:transparent; z-index:1; border-radius:8px; pointer-events:auto; }
+.month-draft-outline.good{ border:2px solid #16a34a; }
+.month-draft-outline.warning{ border:2px solid #ca8a04; }
+.month-draft-outline.error{ border:2px solid #dc2626; }
+.month-draft-outline.continue-left{ left:0; border-left:0; border-top-left-radius:0; border-bottom-left-radius:0; }
+.month-draft-outline.continue-right{ right:0; border-right:0; border-top-right-radius:0; border-bottom-right-radius:0; }
