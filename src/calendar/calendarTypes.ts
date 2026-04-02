@@ -25,15 +25,28 @@ export type SelectedAssetPeriods = {
   selectedPeriods: TimePeriod[];
 };
 
+export type OutputUserPeriods = {
+  userName: string;
+  selectedPeriods: TimePeriod[];
+};
+
+export type OutputAssetPeriods = {
+  id: string;
+  name: string;
+  selectedPeriods?: TimePeriod[];
+  users?: OutputUserPeriods[];
+};
+
 export type CalendarInput = {
   mode: CalendarMode;
-  currentUser: string;
+  currentUser?: string;
+  currentUsers?: string[];
   assets: Asset[];
   continuousCutMode?: boolean;
 };
 
 export type CalendarOutput = {
-  assets: SelectedAssetPeriods[];
+  assets: OutputAssetPeriods[];
 };
 
 export type PeriodStatus = 'neutral' | 'good' | 'warning' | 'error';

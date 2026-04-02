@@ -6,6 +6,8 @@ import type {
   CalendarViewMode,
   DraftGroup,
   ExistingGroup,
+  ExistingReservation,
+  OutputAssetPeriods,
   PeriodStatus,
   SelectionPeriodDef,
   TimePeriod,
@@ -79,7 +81,13 @@ type InternalPositionedDayBar = InternalDayBar & {
 
 type EditSelection = {
   assetId: string;
+  userName: string;
   index: number;
+} | null;
+
+type AddEditTarget = {
+  assetId: string;
+  userName: string;
 } | null;
 
 const TIME_COL_W = 62;
@@ -96,6 +104,32 @@ const DEFAULT_COLORS = [
 ];
 const MAX_VISUAL_ASSETS = 8;
 const MAX_VISIBLE_GROUPS = 8;
+
+function modeIsColorDense(mode: CalendarInput['mode']) {
+  return mode === 'view' || mode === 'edit';
+}
+
+function getEditableUsers(input: CalendarInput): string[] {
+  if (Array.isArray(input.currentUsers) && input.currentUsers.length > 0) {
+    return [...new Set(input.currentUsers)];
+  }
+  if (input.currentUser && input.currentUser.trim().length > 0) {
+    return [input.currentUser];
+  }
+  return [];
+}
+
+function normalizePeriodsKey(periods: TimePeriod[]): string {
+  return [...periods]
+    .sort((a, b) => a.start.localeCompare(b.start) || a.end.localeCompare(b.end))
+    .map((p) => `${p.start}|${p.end}`)
+    .join(';');
+}
+
+function earliestEndOfPeriods(periods: TimePeriod[]): number {
+  if (periods.length === 0) return Number.MAX_SAFE_INTEGER;
+  return Math.min(...periods.map((p) => parseDateTime(p.end).getTime()));
+}
 
 function layoutDraftColumns(dayBars: InternalDayBar[]): InternalPositionedDayBar[] {
   if (dayBars.length === 0) return [];
@@ -123,7 +157,6 @@ function layoutDraftColumns(dayBars: InternalDayBar[]): InternalPositionedDayBar
 
   columns.forEach((column, index) => {
     const leftPct = (laneCount - 1 - index) * widthPct;
-
     column.bars.forEach((bar: InternalDayBar) => {
       positioned.push({
         ...bar,
@@ -182,7 +215,6 @@ function layoutExistingColumns(dayBars: InternalDayBar[]): InternalPositionedDay
 
     ordered.forEach((bar, index) => {
       const leftPct = 100 - laneCount * widthPct + index * widthPct;
-
       positioned.push({
         ...bar,
         leftPct,
@@ -217,32 +249,69 @@ function buildExistingGroups(assets: Asset[]): ExistingGroup[] {
   return [...map.values()];
 }
 
-function buildInitialEditPeriodsByAsset(assets: Asset[]): Record<string, TimePeriod[]> {
-  const result: Record<string, TimePeriod[]> = {};
+function buildInitialEditPeriodsByAssetUser(
+  assets: Asset[],
+  editableUsers: string[],
+): Record<string, Record<string, TimePeriod[]>> {
+  const editableSet = new Set(editableUsers);
+  const result: Record<string, Record<string, TimePeriod[]>> = {};
+
   for (const asset of assets) {
-    result[asset.id] = asset.existingPeriods.map((p) => ({
-      start: p.start,
-      end: p.end,
-    }));
+    result[asset.id] = {};
+    for (const userName of editableUsers) {
+      result[asset.id][userName] = [];
+    }
+    for (const reservation of asset.existingPeriods) {
+      if (editableSet.has(reservation.userName)) {
+        result[asset.id][reservation.userName].push({
+          start: reservation.start,
+          end: reservation.end,
+        });
+      }
+    }
   }
+
   return result;
 }
 
+function getBlockedReservationsForAsset(
+  asset: Asset,
+  editableUsers: string[],
+): ExistingReservation[] {
+  const editableSet = new Set(editableUsers);
+  return asset.existingPeriods.filter((p) => !editableSet.has(p.userName));
+}
+
 function clampEditPeriodWithinAsset(
-  periods: TimePeriod[],
+  editableByUser: Record<string, TimePeriod[]>,
+  blockedReservations: ExistingReservation[],
+  skipUserName: string,
   skipIndex: number,
   proposed: TimePeriod,
 ): TimePeriod | null {
   let start = parseDateTime(proposed.start);
   let endExclusive = endToExclusive(proposed.end);
 
-  const others = periods
-    .filter((_, i) => i !== skipIndex)
-    .map((p) => ({
+  const others: Array<{ start: Date; end: Date }> = [];
+
+  Object.entries(editableByUser).forEach(([userName, periods]) => {
+    periods.forEach((p, index) => {
+      if (userName === skipUserName && index === skipIndex) return;
+      others.push({
+        start: parseDateTime(p.start),
+        end: endToExclusive(p.end),
+      });
+    });
+  });
+
+  blockedReservations.forEach((p) => {
+    others.push({
       start: parseDateTime(p.start),
       end: endToExclusive(p.end),
-    }))
-    .sort((a, b) => a.start.getTime() - b.start.getTime());
+    });
+  });
+
+  others.sort((a, b) => a.start.getTime() - b.start.getTime());
 
   const prev = [...others]
     .filter((p) => p.start.getTime() < start.getTime())
@@ -260,20 +329,7 @@ function clampEditPeriodWithinAsset(
 
   const normalized = normalizePeriod(start, endExclusive);
   if (!normalized) return null;
-
   return normalized;
-}
-
-function normalizePeriodsKey(periods: TimePeriod[]): string {
-  return [...periods]
-    .sort((a, b) => a.start.localeCompare(b.start) || a.end.localeCompare(b.end))
-    .map((p) => `${p.start}|${p.end}`)
-    .join(';');
-}
-
-function earliestEndOfPeriods(periods: TimePeriod[]): number {
-  if (periods.length === 0) return Number.MAX_SAFE_INTEGER;
-  return Math.min(...periods.map((p) => parseDateTime(p.end).getTime()));
 }
 
 function applyGroupLimitToSelections(
@@ -307,35 +363,28 @@ function applyGroupLimitToSelections(
     return {
       byAsset,
       wasLimited: false,
-      limitedAssetNames: [] as string[],
     };
   }
 
   const cutoffPeriods = groups[MAX_VISIBLE_GROUPS - 1].periods;
   const keepKeys = new Set(
-    groups
-      .slice(0, MAX_VISIBLE_GROUPS)
-      .map((g) => normalizePeriodsKey(g.periods)),
+    groups.slice(0, MAX_VISIBLE_GROUPS).map((g) => normalizePeriodsKey(g.periods)),
   );
 
   const nextByAsset: Record<string, TimePeriod[]> = { ...byAsset };
-  const limitedAssetNames: string[] = [];
 
   for (const asset of assets) {
     const periods = byAsset[asset.id] ?? [];
     if (periods.length === 0) continue;
-
     const key = normalizePeriodsKey(periods);
     if (!keepKeys.has(key)) {
       nextByAsset[asset.id] = cutoffPeriods;
-      limitedAssetNames.push(`${asset.name} (${asset.id})`);
     }
   }
 
   return {
     byAsset: nextByAsset,
     wasLimited: true,
-    limitedAssetNames,
   };
 }
 
@@ -348,6 +397,10 @@ export default function AssetCalendar({
   initialViewMode?: CalendarViewMode;
   onConfirm?: (output: CalendarOutput) => void;
 }) {
+  const mode = input.mode;
+  const editableUsers = useMemo(() => getEditableUsers(input), [input]);
+  const primaryUser = editableUsers[0] ?? '';
+
   const [viewMode, setViewMode] = useState<CalendarViewMode>(initialViewMode);
   const [anchorDate, setAnchorDate] = useState(new Date());
   const [periods, setPeriods] = useState<SelectionPeriodDef[]>([
@@ -359,9 +412,11 @@ export default function AssetCalendar({
   const [repeatEveryWeeks, setRepeatEveryWeeks] = useState(1);
   const [repeatCount, setRepeatCount] = useState(1);
 
-  const [editPeriodsByAsset, setEditPeriodsByAsset] = useState<Record<string, TimePeriod[]>>({});
+  const [editPeriodsByAssetUser, setEditPeriodsByAssetUser] = useState<
+    Record<string, Record<string, TimePeriod[]>>
+  >({});
   const [selectedEditPeriod, setSelectedEditPeriod] = useState<EditSelection>(null);
-  const [addForAssetId, setAddForAssetId] = useState<string | null>(null);
+  const [addForTarget, setAddForTarget] = useState<AddEditTarget>(null);
 
   const gridRef = useRef<HTMLDivElement | null>(null);
 
@@ -375,32 +430,22 @@ export default function AssetCalendar({
   );
 
   const visualAssets = useMemo(
-    () =>
-      modeIsColorDense(input.mode)
-        ? assets.slice(0, MAX_VISUAL_ASSETS)
-        : assets,
-    [assets, input.mode],
+    () => (modeIsColorDense(mode) ? assets.slice(0, MAX_VISUAL_ASSETS) : assets),
+    [assets, mode],
   );
 
   const omittedAssets = useMemo(
-    () =>
-      modeIsColorDense(input.mode)
-        ? assets.slice(MAX_VISUAL_ASSETS)
-        : [],
-    [assets, input.mode],
+    () => (modeIsColorDense(mode) ? assets.slice(MAX_VISUAL_ASSETS) : []),
+    [assets, mode],
   );
-
-  const mode = input.mode;
-  const currentUser = input.currentUser;
-  const continuousCutMode = input.continuousCutMode ?? true;
 
   useEffect(() => {
     if (mode === 'edit') {
-      setEditPeriodsByAsset(buildInitialEditPeriodsByAsset(assets));
+      setEditPeriodsByAssetUser(buildInitialEditPeriodsByAssetUser(assets, editableUsers));
       setSelectedEditPeriod(null);
-      setAddForAssetId(null);
+      setAddForTarget(null);
     }
-  }, [assets, mode]);
+  }, [assets, editableUsers, mode]);
 
   const weekStart = useMemo(() => getWeekStart(anchorDate), [anchorDate]);
   const weekDays = useMemo(() => getWeekDays(weekStart), [weekStart]);
@@ -410,24 +455,6 @@ export default function AssetCalendar({
   );
   const activePeriod =
     periods.find((p: SelectionPeriodDef) => p.id === activePeriodId) ?? periods[0] ?? null;
-
-  const selectionGroupLimitMessage = useMemo(() => {
-    if (mode !== 'reserve' && mode !== 'checkout') return '';
-    const messages: string[] = [];
-
-    for (const period of periods as SelectionPeriodDef[]) {
-      const byAsset = draftsByAssetByPeriodId[period.id] ?? {};
-      const limited = applyGroupLimitToSelections(byAsset, visualAssets);
-      if (limited.wasLimited) {
-        messages.push(
-          `Some assets would split into more than ${MAX_VISIBLE_GROUPS} separate bars, so the preview has been gently limited to keep the calendar readable.`,
-        );
-        break;
-      }
-    }
-
-    return messages[0] ?? '';
-  }, [mode, periods, visualAssets]);
 
   const draftsByAssetByPeriodId = useMemo(() => {
     const result: Record<string, Record<string, TimePeriod[]>> = {};
@@ -459,20 +486,54 @@ export default function AssetCalendar({
         byAsset[asset.id] = buildPeriodsForAsset(
           safeRange,
           asset.existingPeriods,
-          currentUser,
-          continuousCutMode,
+          primaryUser,
+          input.continuousCutMode ?? true,
         );
       }
 
-      if (mode === 'reserve' || mode === 'checkout') {
-        result[period.id] = applyGroupLimitToSelections(byAsset, visualAssets).byAsset;
-      } else {
-        result[period.id] = byAsset;
-      }
+      result[period.id] =
+        mode === 'reserve' || mode === 'checkout'
+          ? applyGroupLimitToSelections(byAsset, visualAssets).byAsset
+          : byAsset;
     }
 
     return result;
-  }, [periods, visualAssets, currentUser, continuousCutMode, mode, minSelectableStart]);
+  }, [periods, visualAssets, mode, minSelectableStart, primaryUser, input.continuousCutMode]);
+
+  const selectionGroupLimitMessage = useMemo(() => {
+    if (mode !== 'reserve' && mode !== 'checkout') return '';
+    for (const period of periods as SelectionPeriodDef[]) {
+      const range =
+        mode === 'checkout'
+          ? period.requestedRange
+            ? {
+                start: formatDateTime(minSelectableStart),
+                end: period.requestedRange.end,
+              }
+            : null
+          : period.requestedRange;
+
+      if (!range) continue;
+      const safeRange = clampRangeToMinStart(range, minSelectableStart);
+      if (!safeRange) continue;
+
+      const byAsset: Record<string, TimePeriod[]> = {};
+      for (const asset of visualAssets) {
+        byAsset[asset.id] = buildPeriodsForAsset(
+          safeRange,
+          asset.existingPeriods,
+          primaryUser,
+          input.continuousCutMode ?? true,
+        );
+      }
+
+      const limited = applyGroupLimitToSelections(byAsset, visualAssets);
+      if (limited.wasLimited) {
+        return `The selected assets would split into more than ${MAX_VISIBLE_GROUPS} different visible bars, so the preview has been gently limited to keep the calendar readable.`;
+      }
+    }
+    return '';
+  }, [mode, periods, minSelectableStart, visualAssets, primaryUser, input.continuousCutMode]);
 
   useEffect(() => {
     const id = window.setInterval(() => setNow(new Date()), 60_000);
@@ -511,19 +572,44 @@ export default function AssetCalendar({
     );
   };
 
-  const updateEditPeriodRange = (assetId: string, index: number, nextRange: TimePeriod | null) => {
-    setEditPeriodsByAsset((prev) => {
-      const current = [...(prev[assetId] ?? [])];
+  const updateEditPeriodRange = (
+    assetId: string,
+    userName: string,
+    index: number,
+    nextRange: TimePeriod | null,
+  ) => {
+    setEditPeriodsByAssetUser((prev) => {
+      const assetBlock = { ...(prev[assetId] ?? {}) };
+      const userPeriods = [...(assetBlock[userName] ?? [])];
+      const blocked = getBlockedReservationsForAsset(
+        visualAssets.find((a) => a.id === assetId) as Asset,
+        editableUsers,
+      );
+
       if (nextRange === null) {
-        current.splice(index, 1);
-      } else {
-        const clamped = clampEditPeriodWithinAsset(current, index, nextRange);
-        if (!clamped) return prev;
-        current[index] = clamped;
+        userPeriods.splice(index, 1);
+        assetBlock[userName] = userPeriods;
+        return {
+          ...prev,
+          [assetId]: assetBlock,
+        };
       }
+
+      const clamped = clampEditPeriodWithinAsset(
+        assetBlock,
+        blocked,
+        userName,
+        index,
+        nextRange,
+      );
+      if (!clamped) return prev;
+
+      userPeriods[index] = clamped;
+      assetBlock[userName] = userPeriods;
+
       return {
         ...prev,
-        [assetId]: current,
+        [assetId]: assetBlock,
       };
     });
   };
@@ -531,7 +617,12 @@ export default function AssetCalendar({
   const resetActivePeriod = () => {
     if (mode === 'edit') {
       if (!selectedEditPeriod) return;
-      updateEditPeriodRange(selectedEditPeriod.assetId, selectedEditPeriod.index, null);
+      updateEditPeriodRange(
+        selectedEditPeriod.assetId,
+        selectedEditPeriod.userName,
+        selectedEditPeriod.index,
+        null,
+      );
       setSelectedEditPeriod(null);
       return;
     }
@@ -588,9 +679,8 @@ export default function AssetCalendar({
       }
 
       if (mode === 'edit') {
-        const [assetId, indexText] = dragState.periodId.split('__');
-        const index = Number(indexText);
-        updateEditPeriodRange(assetId, index, nextRange);
+        const [assetId, userName, indexText] = dragState.periodId.split('__');
+        updateEditPeriodRange(assetId, userName, Number(indexText), nextRange);
         return;
       }
 
@@ -608,7 +698,7 @@ export default function AssetCalendar({
       window.removeEventListener('mousemove', onMove);
       window.removeEventListener('mouseup', onUp);
     };
-  }, [dragState, mode, minSelectableStart]);
+  }, [dragState, mode, minSelectableStart, visualAssets, editableUsers]);
 
   const handleCellClick = (date: Date) => {
     if (mode === 'view' || !gridRef.current) return;
@@ -616,26 +706,46 @@ export default function AssetCalendar({
     const clickedHour = startOfHour(date);
 
     if (mode === 'edit') {
-      if (!addForAssetId) return;
+      if (!addForTarget) return;
 
       const proposed = buildOneHourPeriod(clickedHour);
+      const asset = visualAssets.find((a) => a.id === addForTarget.assetId);
+      if (!asset) return;
 
-      setEditPeriodsByAsset((prev) => {
-        const current = [...(prev[addForAssetId] ?? [])];
-        current.push(proposed);
-        const newIndex = current.length - 1;
-        const clamped = clampEditPeriodWithinAsset(current, newIndex, proposed);
+      setEditPeriodsByAssetUser((prev) => {
+        const assetBlock = { ...(prev[addForTarget.assetId] ?? {}) };
+        const userPeriods = [...(assetBlock[addForTarget.userName] ?? [])];
+        userPeriods.push(proposed);
+        const newIndex = userPeriods.length - 1;
+        assetBlock[addForTarget.userName] = userPeriods;
+
+        const blocked = getBlockedReservationsForAsset(asset, editableUsers);
+        const clamped = clampEditPeriodWithinAsset(
+          assetBlock,
+          blocked,
+          addForTarget.userName,
+          newIndex,
+          proposed,
+        );
         if (!clamped) return prev;
-        current[newIndex] = clamped;
+
+        userPeriods[newIndex] = clamped;
+        assetBlock[addForTarget.userName] = userPeriods;
+
         return {
           ...prev,
-          [addForAssetId]: current,
+          [addForTarget.assetId]: assetBlock,
         };
       });
 
-      const newIndex = (editPeriodsByAsset[addForAssetId]?.length ?? 0);
-      setSelectedEditPeriod({ assetId: addForAssetId, index: newIndex });
-      setAddForAssetId(null);
+      const newIndex =
+        editPeriodsByAssetUser[addForTarget.assetId]?.[addForTarget.userName]?.length ?? 0;
+      setSelectedEditPeriod({
+        assetId: addForTarget.assetId,
+        userName: addForTarget.userName,
+        index: newIndex,
+      });
+      setAddForTarget(null);
       return;
     }
 
@@ -686,9 +796,8 @@ export default function AssetCalendar({
 
     if (!baseRange) {
       if (mode === 'edit') {
-        const [assetId, indexText] = periodId.split('__');
-        const index = Number(indexText);
-        baseRange = editPeriodsByAsset[assetId]?.[index] ?? null;
+        const [assetId, userName, indexText] = periodId.split('__');
+        baseRange = editPeriodsByAssetUser[assetId]?.[userName]?.[Number(indexText)] ?? null;
       } else {
         const targetPeriod = periods.find((p: SelectionPeriodDef) => p.id === periodId);
         baseRange = targetPeriod?.requestedRange ?? null;
@@ -726,8 +835,10 @@ export default function AssetCalendar({
     setActivePeriodId(id);
   };
 
-  const toggleAddForAsset = (assetId: string) => {
-    setAddForAssetId((prev) => (prev === assetId ? null : assetId));
+  const toggleAddForTarget = (assetId: string, userName: string) => {
+    setAddForTarget((prev) =>
+      prev?.assetId === assetId && prev?.userName === userName ? null : { assetId, userName },
+    );
     setSelectedEditPeriod(null);
   };
 
@@ -781,23 +892,52 @@ export default function AssetCalendar({
   const periodStatuses = useMemo(() => {
     const result: Record<string, PeriodStatus> = {};
     for (const period of periods as SelectionPeriodDef[]) {
-      result[period.id] = periodStatusForId(period, visualAssets, draftsByAssetByPeriodId, currentUser);
+      result[period.id] = periodStatusForId(period, visualAssets, draftsByAssetByPeriodId, primaryUser);
     }
     return result;
-  }, [periods, visualAssets, draftsByAssetByPeriodId, currentUser]);
+  }, [periods, visualAssets, draftsByAssetByPeriodId, primaryUser]);
 
   const draftGroups = useMemo(
-    () => buildDraftGroups(visualAssets, periods, draftsByAssetByPeriodId, currentUser) as DraftGroup[],
-    [visualAssets, periods, draftsByAssetByPeriodId, currentUser],
+    () => buildDraftGroups(visualAssets, periods, draftsByAssetByPeriodId, primaryUser) as DraftGroup[],
+    [visualAssets, periods, draftsByAssetByPeriodId, primaryUser],
   );
 
   const existingGroups = useMemo(() => buildExistingGroups(visualAssets), [visualAssets]);
   const activeRequestedRange = activePeriod?.requestedRange ?? null;
 
   const existingDayBars = useMemo(() => {
-    if (mode === 'edit') return [] as InternalDayBar[];
-
     const result: InternalDayBar[] = [];
+
+    if (mode === 'edit') {
+      for (const asset of visualAssets) {
+        const blocked = getBlockedReservationsForAsset(asset, editableUsers);
+        blocked.forEach((reservation, reservationIndex) => {
+          const parts = splitPeriodForWeek(
+            { start: reservation.start, end: reservation.end },
+            weekStart,
+          );
+          const tooltip = `${asset.name} — ${reservation.userName}\n${reservation.start} -> ${reservation.end}`;
+
+          parts.forEach((part, partIndex) => {
+            const rect = periodToDisplayRect(part, weekStart);
+            result.push({
+              id: `edit-blocked-${asset.id}-${reservationIndex}-${partIndex}`,
+              type: 'existing',
+              dayIndex: rect.dayIndex,
+              start: rect.start,
+              end: rect.end,
+              top: rect.top,
+              height: rect.height,
+              color: '#9ca3af',
+              label: `${asset.name} — ${reservation.userName}`,
+              tooltip,
+              sortEnd: rect.end.getTime(),
+            });
+          });
+        });
+      }
+      return result;
+    }
 
     for (const group of existingGroups) {
       const parts = splitPeriodForWeek(group.period, weekStart);
@@ -809,7 +949,7 @@ export default function AssetCalendar({
           }: {
             reservation: { start: string; end: string; userName: string };
           }) => {
-            if (reservation.userName === currentUser) return false;
+            if (reservation.userName === primaryUser) return false;
             const rs = parseDateTime(reservation.start);
             const re = endToExclusive(reservation.end);
             const ws = parseDateTime(activeRequestedRange.start);
@@ -855,35 +995,38 @@ export default function AssetCalendar({
     }
 
     return result;
-  }, [existingGroups, weekStart, activeRequestedRange, currentUser, mode]);
+  }, [mode, visualAssets, editableUsers, weekStart, existingGroups, activeRequestedRange, primaryUser]);
 
   const draftDayBars = useMemo(() => {
     if (mode === 'edit') {
       const result: InternalDayBar[] = [];
 
       visualAssets.forEach((asset: Asset) => {
-        const periodsForAsset = editPeriodsByAsset[asset.id] ?? [];
-        periodsForAsset.forEach((period: TimePeriod, periodIndex: number) => {
-          const parts = splitPeriodForWeek(period, weekStart);
-          const tooltip = `${asset.name}\n${period.start} -> ${period.end}`;
+        const userBlock = editPeriodsByAssetUser[asset.id] ?? {};
+        editableUsers.forEach((userName) => {
+          const periodsForUser = userBlock[userName] ?? [];
+          periodsForUser.forEach((period: TimePeriod, periodIndex: number) => {
+            const parts = splitPeriodForWeek(period, weekStart);
+            const tooltip = `${asset.name} — ${userName}\n${period.start} -> ${period.end}`;
 
-          parts.forEach((part, partIndex) => {
-            const rect = periodToDisplayRect(part, weekStart);
-            result.push({
-              id: `edit-${asset.id}-${periodIndex}-${partIndex}`,
-              periodId: `${asset.id}__${periodIndex}`,
-              columnKey: asset.id,
-              type: 'draft',
-              dayIndex: rect.dayIndex,
-              start: rect.start,
-              end: rect.end,
-              top: rect.top,
-              height: rect.height,
-              color: asset.color ?? '#2563eb',
-              label: asset.name,
-              tooltip,
-              sortEnd: rect.end.getTime(),
-              status: 'neutral',
+            parts.forEach((part, partIndex) => {
+              const rect = periodToDisplayRect(part, weekStart);
+              result.push({
+                id: `edit-${asset.id}-${userName}-${periodIndex}-${partIndex}`,
+                periodId: `${asset.id}__${userName}__${periodIndex}`,
+                columnKey: `${asset.id}__${userName}`,
+                type: 'draft',
+                dayIndex: rect.dayIndex,
+                start: rect.start,
+                end: rect.end,
+                top: rect.top,
+                height: rect.height,
+                color: asset.color ?? '#2563eb',
+                label: `${asset.name} — ${userName}`,
+                tooltip,
+                sortEnd: rect.end.getTime(),
+                status: 'neutral',
+              });
             });
           });
         });
@@ -934,7 +1077,7 @@ export default function AssetCalendar({
     });
 
     return result;
-  }, [draftGroups, weekStart, mode, visualAssets, editPeriodsByAsset]);
+  }, [mode, visualAssets, editPeriodsByAssetUser, editableUsers, weekStart, draftGroups]);
 
   const dayLayouts = useMemo(() => {
     return Array.from({ length: 7 }, (_, dayIndex) => {
@@ -971,31 +1114,41 @@ export default function AssetCalendar({
 
   const output = useMemo<CalendarOutput>(() => {
     if (mode === 'edit') {
-      return {
-        assets: assets.map((asset: Asset) => ({
-          id: asset.id,
-          name: asset.name,
-          selectedPeriods: editPeriodsByAsset[asset.id] ?? [],
+      const assetsOutput: OutputAssetPeriods[] = assets.map((asset: Asset) => ({
+        id: asset.id,
+        name: asset.name,
+        users: editableUsers.map((userName) => ({
+          userName,
+          selectedPeriods: editPeriodsByAssetUser[asset.id]?.[userName] ?? [],
         })),
-      };
+      }));
+      return { assets: assetsOutput };
     }
 
     return { assets: periodsToOutput(visualAssets, draftsByAssetByPeriodId) };
-  }, [assets, visualAssets, draftsByAssetByPeriodId, mode, editPeriodsByAsset]);
+  }, [mode, assets, editableUsers, editPeriodsByAssetUser, visualAssets, draftsByAssetByPeriodId]);
 
   const weekEnd = useMemo(() => endOfDayInclusive(addDays(weekStart, 6)), [weekStart]);
 
   const monthAssets = useMemo(() => {
     if (mode !== 'edit') return visualAssets;
-    return visualAssets.map((asset: Asset) => ({
-      ...asset,
-      existingPeriods: (editPeriodsByAsset[asset.id] ?? []).map((p: TimePeriod) => ({
-        start: p.start,
-        end: p.end,
-        userName: currentUser,
-      })),
-    }));
-  }, [visualAssets, editPeriodsByAsset, mode, currentUser]);
+
+    return visualAssets.map((asset: Asset) => {
+      const blocked = getBlockedReservationsForAsset(asset, editableUsers);
+      const editablePeriods = editableUsers.flatMap((userName) =>
+        (editPeriodsByAssetUser[asset.id]?.[userName] ?? []).map((p: TimePeriod) => ({
+          start: p.start,
+          end: p.end,
+          userName,
+        })),
+      );
+
+      return {
+        ...asset,
+        existingPeriods: [...blocked, ...editablePeriods],
+      };
+    });
+  }, [mode, visualAssets, editableUsers, editPeriodsByAssetUser]);
 
   return (
     <section className="calendar-card standalone-calendar">
@@ -1096,25 +1249,31 @@ export default function AssetCalendar({
       {mode === 'edit' && (
         <div className="period-panel">
           <div className="period-chip-list">
-            {visualAssets.map((asset: Asset) => {
-              const active = addForAssetId === asset.id;
-              return (
-                <button
-                  key={asset.id}
-                  type="button"
-                  className={`period-chip ${active ? 'active' : ''}`}
-                  onClick={() => toggleAddForAsset(asset.id)}
-                >
-                  <span
-                    className="period-status-dot"
-                    style={{ backgroundColor: asset.color ?? '#2563eb' }}
-                  />
-                  <span className="period-chip-meta">
-                    {active ? `Click calendar for ${asset.name}` : `Add for ${asset.name}`}
-                  </span>
-                </button>
-              );
-            })}
+            {visualAssets.flatMap((asset: Asset) =>
+              editableUsers.map((userName) => {
+                const active =
+                  addForTarget?.assetId === asset.id && addForTarget?.userName === userName;
+
+                return (
+                  <button
+                    key={`${asset.id}-${userName}`}
+                    type="button"
+                    className={`period-chip ${active ? 'active' : ''}`}
+                    onClick={() => toggleAddForTarget(asset.id, userName)}
+                  >
+                    <span
+                      className="period-status-dot"
+                      style={{ backgroundColor: asset.color ?? '#2563eb' }}
+                    />
+                    <span className="period-chip-meta">
+                      {active
+                        ? `Click calendar for ${asset.name} — ${userName}`
+                        : `Add for ${asset.name} — ${userName}`}
+                    </span>
+                  </button>
+                );
+              }),
+            )}
           </div>
         </div>
       )}
@@ -1182,7 +1341,7 @@ export default function AssetCalendar({
           {weekDays.map((day, dayIndex) => (
             <div
               key={day.toISOString()}
-              className={`day-column ${dayIndex % 2 === 1 ? 'alt' : ''} ${mode === 'edit' && addForAssetId ? 'day-column-add-mode' : ''}`}
+              className={`day-column ${dayIndex % 2 === 1 ? 'alt' : ''} ${mode === 'edit' && addForTarget ? 'day-column-add-mode' : ''}`}
             >
               {HOURS.map((hour) => (
                 <button
@@ -1221,7 +1380,7 @@ export default function AssetCalendar({
 
                 const selectedEdit =
                   isEditBar && selectedEditPeriod
-                    ? `${selectedEditPeriod.assetId}__${selectedEditPeriod.index}`
+                    ? `${selectedEditPeriod.assetId}__${selectedEditPeriod.userName}__${selectedEditPeriod.index}`
                     : null;
 
                 const currentBarSelected = isEditBar
@@ -1258,9 +1417,9 @@ export default function AssetCalendar({
                   latestVisibleEndMs !== null
                     ? isEditBar
                       ? (() => {
-                          const [assetId, indexText] = (bar.periodId ?? '').split('__');
+                          const [assetId, userName, indexText] = (bar.periodId ?? '').split('__');
                           const idx = Number(indexText);
-                          const base = editPeriodsByAsset[assetId]?.[idx];
+                          const base = editPeriodsByAssetUser[assetId]?.[userName]?.[idx];
                           return base
                             ? {
                                 start: base.start,
@@ -1298,9 +1457,13 @@ export default function AssetCalendar({
                     onMouseDown={(e) => {
                       if (!bar.periodId) return;
                       if (isEditBar) {
-                        const [assetId, indexText] = bar.periodId.split('__');
-                        setSelectedEditPeriod({ assetId, index: Number(indexText) });
-                        setAddForAssetId(null);
+                        const [assetId, userName, indexText] = bar.periodId.split('__');
+                        setSelectedEditPeriod({
+                          assetId,
+                          userName,
+                          index: Number(indexText),
+                        });
+                        setAddForTarget(null);
                       } else {
                         setActivePeriodId(bar.periodId);
                       }
@@ -1312,9 +1475,13 @@ export default function AssetCalendar({
                       e.stopPropagation();
                       if (!bar.periodId) return;
                       if (isEditBar) {
-                        const [assetId, indexText] = bar.periodId.split('__');
-                        setSelectedEditPeriod({ assetId, index: Number(indexText) });
-                        setAddForAssetId(null);
+                        const [assetId, userName, indexText] = bar.periodId.split('__');
+                        setSelectedEditPeriod({
+                          assetId,
+                          userName,
+                          index: Number(indexText),
+                        });
+                        setAddForTarget(null);
                       } else {
                         setActivePeriodId(bar.periodId);
                       }
@@ -1391,8 +1558,4 @@ export default function AssetCalendar({
       )}
     </section>
   );
-}
-
-function modeIsColorDense(mode: CalendarInput['mode']) {
-  return mode === 'view' || mode === 'edit';
 }
