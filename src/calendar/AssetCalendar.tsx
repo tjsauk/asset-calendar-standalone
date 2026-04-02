@@ -33,6 +33,7 @@ import {
   formatDateTime,
   getWeekDays,
   getWeekStart,
+  normalizePeriod,
   parseDateTime,
   periodStatusForId,
   periodToDisplayRect,
@@ -40,6 +41,7 @@ import {
   spanWeeks,
   splitPeriodForWeek,
   startOfDay,
+  startOfHour,
 } from './calendarUtils';
 import './assetCalendar.css';
 
@@ -75,6 +77,11 @@ type InternalPositionedDayBar = InternalDayBar & {
   widthPct: number;
 };
 
+type EditSelection = {
+  assetId: string;
+  index: number;
+} | null;
+
 const TIME_COL_W = 62;
 const HEADER_H = 42;
 const DEFAULT_COLORS = [
@@ -87,6 +94,8 @@ const DEFAULT_COLORS = [
   '#ca8a04',
   '#be185d',
 ];
+const MAX_VISUAL_ASSETS = 8;
+const MAX_VISIBLE_GROUPS = 8;
 
 function layoutDraftColumns(dayBars: InternalDayBar[]): InternalPositionedDayBar[] {
   if (dayBars.length === 0) return [];
@@ -208,6 +217,128 @@ function buildExistingGroups(assets: Asset[]): ExistingGroup[] {
   return [...map.values()];
 }
 
+function buildInitialEditPeriodsByAsset(assets: Asset[]): Record<string, TimePeriod[]> {
+  const result: Record<string, TimePeriod[]> = {};
+  for (const asset of assets) {
+    result[asset.id] = asset.existingPeriods.map((p) => ({
+      start: p.start,
+      end: p.end,
+    }));
+  }
+  return result;
+}
+
+function clampEditPeriodWithinAsset(
+  periods: TimePeriod[],
+  skipIndex: number,
+  proposed: TimePeriod,
+): TimePeriod | null {
+  let start = parseDateTime(proposed.start);
+  let endExclusive = endToExclusive(proposed.end);
+
+  const others = periods
+    .filter((_, i) => i !== skipIndex)
+    .map((p) => ({
+      start: parseDateTime(p.start),
+      end: endToExclusive(p.end),
+    }))
+    .sort((a, b) => a.start.getTime() - b.start.getTime());
+
+  const prev = [...others]
+    .filter((p) => p.start.getTime() < start.getTime())
+    .sort((a, b) => b.start.getTime() - a.start.getTime())[0];
+
+  if (prev && prev.end.getTime() > start.getTime()) {
+    start = new Date(prev.end);
+  }
+
+  const next = others.find((p) => p.start.getTime() > start.getTime());
+
+  if (next && endExclusive.getTime() > next.start.getTime()) {
+    endExclusive = new Date(next.start);
+  }
+
+  const normalized = normalizePeriod(start, endExclusive);
+  if (!normalized) return null;
+
+  return normalized;
+}
+
+function normalizePeriodsKey(periods: TimePeriod[]): string {
+  return [...periods]
+    .sort((a, b) => a.start.localeCompare(b.start) || a.end.localeCompare(b.end))
+    .map((p) => `${p.start}|${p.end}`)
+    .join(';');
+}
+
+function earliestEndOfPeriods(periods: TimePeriod[]): number {
+  if (periods.length === 0) return Number.MAX_SAFE_INTEGER;
+  return Math.min(...periods.map((p) => parseDateTime(p.end).getTime()));
+}
+
+function applyGroupLimitToSelections(
+  byAsset: Record<string, TimePeriod[]>,
+  assets: Asset[],
+) {
+  const groupMap = new Map<
+    string,
+    { periods: TimePeriod[]; assetIds: string[]; earliestEnd: number }
+  >();
+
+  for (const asset of assets) {
+    const periods = byAsset[asset.id] ?? [];
+    if (periods.length === 0) continue;
+    const key = normalizePeriodsKey(periods);
+    const existing = groupMap.get(key);
+    if (existing) {
+      existing.assetIds.push(asset.id);
+    } else {
+      groupMap.set(key, {
+        periods,
+        assetIds: [asset.id],
+        earliestEnd: earliestEndOfPeriods(periods),
+      });
+    }
+  }
+
+  const groups = [...groupMap.values()].sort((a, b) => a.earliestEnd - b.earliestEnd);
+
+  if (groups.length <= MAX_VISIBLE_GROUPS) {
+    return {
+      byAsset,
+      wasLimited: false,
+      limitedAssetNames: [] as string[],
+    };
+  }
+
+  const cutoffPeriods = groups[MAX_VISIBLE_GROUPS - 1].periods;
+  const keepKeys = new Set(
+    groups
+      .slice(0, MAX_VISIBLE_GROUPS)
+      .map((g) => normalizePeriodsKey(g.periods)),
+  );
+
+  const nextByAsset: Record<string, TimePeriod[]> = { ...byAsset };
+  const limitedAssetNames: string[] = [];
+
+  for (const asset of assets) {
+    const periods = byAsset[asset.id] ?? [];
+    if (periods.length === 0) continue;
+
+    const key = normalizePeriodsKey(periods);
+    if (!keepKeys.has(key)) {
+      nextByAsset[asset.id] = cutoffPeriods;
+      limitedAssetNames.push(`${asset.name} (${asset.id})`);
+    }
+  }
+
+  return {
+    byAsset: nextByAsset,
+    wasLimited: true,
+    limitedAssetNames,
+  };
+}
+
 export default function AssetCalendar({
   input,
   initialViewMode = 'week',
@@ -228,6 +359,10 @@ export default function AssetCalendar({
   const [repeatEveryWeeks, setRepeatEveryWeeks] = useState(1);
   const [repeatCount, setRepeatCount] = useState(1);
 
+  const [editPeriodsByAsset, setEditPeriodsByAsset] = useState<Record<string, TimePeriod[]>>({});
+  const [selectedEditPeriod, setSelectedEditPeriod] = useState<EditSelection>(null);
+  const [addForAssetId, setAddForAssetId] = useState<string | null>(null);
+
   const gridRef = useRef<HTMLDivElement | null>(null);
 
   const assets = useMemo(
@@ -239,9 +374,33 @@ export default function AssetCalendar({
     [input.assets],
   );
 
+  const visualAssets = useMemo(
+    () =>
+      modeIsColorDense(input.mode)
+        ? assets.slice(0, MAX_VISUAL_ASSETS)
+        : assets,
+    [assets, input.mode],
+  );
+
+  const omittedAssets = useMemo(
+    () =>
+      modeIsColorDense(input.mode)
+        ? assets.slice(MAX_VISUAL_ASSETS)
+        : [],
+    [assets, input.mode],
+  );
+
   const mode = input.mode;
   const currentUser = input.currentUser;
   const continuousCutMode = input.continuousCutMode ?? true;
+
+  useEffect(() => {
+    if (mode === 'edit') {
+      setEditPeriodsByAsset(buildInitialEditPeriodsByAsset(assets));
+      setSelectedEditPeriod(null);
+      setAddForAssetId(null);
+    }
+  }, [assets, mode]);
 
   const weekStart = useMemo(() => getWeekStart(anchorDate), [anchorDate]);
   const weekDays = useMemo(() => getWeekDays(weekStart), [weekStart]);
@@ -251,6 +410,24 @@ export default function AssetCalendar({
   );
   const activePeriod =
     periods.find((p: SelectionPeriodDef) => p.id === activePeriodId) ?? periods[0] ?? null;
+
+  const selectionGroupLimitMessage = useMemo(() => {
+    if (mode !== 'reserve' && mode !== 'checkout') return '';
+    const messages: string[] = [];
+
+    for (const period of periods as SelectionPeriodDef[]) {
+      const byAsset = draftsByAssetByPeriodId[period.id] ?? {};
+      const limited = applyGroupLimitToSelections(byAsset, visualAssets);
+      if (limited.wasLimited) {
+        messages.push(
+          `Some assets would split into more than ${MAX_VISIBLE_GROUPS} separate bars, so the preview has been gently limited to keep the calendar readable.`,
+        );
+        break;
+      }
+    }
+
+    return messages[0] ?? '';
+  }, [mode, periods, visualAssets]);
 
   const draftsByAssetByPeriodId = useMemo(() => {
     const result: Record<string, Record<string, TimePeriod[]>> = {};
@@ -278,7 +455,7 @@ export default function AssetCalendar({
       }
 
       const byAsset: Record<string, TimePeriod[]> = {};
-      for (const asset of assets) {
+      for (const asset of visualAssets) {
         byAsset[asset.id] = buildPeriodsForAsset(
           safeRange,
           asset.existingPeriods,
@@ -286,11 +463,16 @@ export default function AssetCalendar({
           continuousCutMode,
         );
       }
-      result[period.id] = byAsset;
+
+      if (mode === 'reserve' || mode === 'checkout') {
+        result[period.id] = applyGroupLimitToSelections(byAsset, visualAssets).byAsset;
+      } else {
+        result[period.id] = byAsset;
+      }
     }
 
     return result;
-  }, [periods, assets, currentUser, continuousCutMode, mode, minSelectableStart]);
+  }, [periods, visualAssets, currentUser, continuousCutMode, mode, minSelectableStart]);
 
   useEffect(() => {
     const id = window.setInterval(() => setNow(new Date()), 60_000);
@@ -329,7 +511,31 @@ export default function AssetCalendar({
     );
   };
 
+  const updateEditPeriodRange = (assetId: string, index: number, nextRange: TimePeriod | null) => {
+    setEditPeriodsByAsset((prev) => {
+      const current = [...(prev[assetId] ?? [])];
+      if (nextRange === null) {
+        current.splice(index, 1);
+      } else {
+        const clamped = clampEditPeriodWithinAsset(current, index, nextRange);
+        if (!clamped) return prev;
+        current[index] = clamped;
+      }
+      return {
+        ...prev,
+        [assetId]: current,
+      };
+    });
+  };
+
   const resetActivePeriod = () => {
+    if (mode === 'edit') {
+      if (!selectedEditPeriod) return;
+      updateEditPeriodRange(selectedEditPeriod.assetId, selectedEditPeriod.index, null);
+      setSelectedEditPeriod(null);
+      return;
+    }
+
     if (!activePeriod) return;
 
     if (mode === 'checkout') {
@@ -381,6 +587,13 @@ export default function AssetCalendar({
         };
       }
 
+      if (mode === 'edit') {
+        const [assetId, indexText] = dragState.periodId.split('__');
+        const index = Number(indexText);
+        updateEditPeriodRange(assetId, index, nextRange);
+        return;
+      }
+
       const safe = clampRangeToMinStart(nextRange, minSelectableStart);
       if (!safe) return;
 
@@ -398,17 +611,35 @@ export default function AssetCalendar({
   }, [dragState, mode, minSelectableStart]);
 
   const handleCellClick = (date: Date) => {
-    if (mode === 'view' || !activePeriod) return;
+    if (mode === 'view' || !gridRef.current) return;
 
-    const clickedHour = new Date(
-      date.getFullYear(),
-      date.getMonth(),
-      date.getDate(),
-      date.getHours(),
-      0,
-      0,
-      0,
-    );
+    const clickedHour = startOfHour(date);
+
+    if (mode === 'edit') {
+      if (!addForAssetId) return;
+
+      const proposed = buildOneHourPeriod(clickedHour);
+
+      setEditPeriodsByAsset((prev) => {
+        const current = [...(prev[addForAssetId] ?? [])];
+        current.push(proposed);
+        const newIndex = current.length - 1;
+        const clamped = clampEditPeriodWithinAsset(current, newIndex, proposed);
+        if (!clamped) return prev;
+        current[newIndex] = clamped;
+        return {
+          ...prev,
+          [addForAssetId]: current,
+        };
+      });
+
+      const newIndex = (editPeriodsByAsset[addForAssetId]?.length ?? 0);
+      setSelectedEditPeriod({ assetId: addForAssetId, index: newIndex });
+      setAddForAssetId(null);
+      return;
+    }
+
+    if (!activePeriod) return;
     if (clickedHour < minSelectableStart) return;
 
     if (mode === 'checkout') {
@@ -451,8 +682,19 @@ export default function AssetCalendar({
     periodId: string,
     dragRange?: TimePeriod,
   ) => {
-    const targetPeriod = periods.find((p: SelectionPeriodDef) => p.id === periodId);
-    const baseRange = dragRange ?? targetPeriod?.requestedRange;
+    let baseRange: TimePeriod | null = dragRange ?? null;
+
+    if (!baseRange) {
+      if (mode === 'edit') {
+        const [assetId, indexText] = periodId.split('__');
+        const index = Number(indexText);
+        baseRange = editPeriodsByAsset[assetId]?.[index] ?? null;
+      } else {
+        const targetPeriod = periods.find((p: SelectionPeriodDef) => p.id === periodId);
+        baseRange = targetPeriod?.requestedRange ?? null;
+      }
+    }
+
     if (!baseRange) return;
     if (mode === 'checkout' && kind !== 'resize-end') return;
 
@@ -469,7 +711,6 @@ export default function AssetCalendar({
     const hourIndex = Math.max(0, Math.min(23, Math.floor(y / HOUR_ROW_PX)));
     const absoluteHour = dayIndex * 24 + hourIndex;
 
-    setActivePeriodId(periodId);
     setDragState({
       kind,
       startMouseHour: absoluteHour,
@@ -483,6 +724,11 @@ export default function AssetCalendar({
     const id = `p${periods.length + 1}`;
     setPeriods((prev) => [...prev, { id, requestedRange: null }]);
     setActivePeriodId(id);
+  };
+
+  const toggleAddForAsset = (assetId: string) => {
+    setAddForAssetId((prev) => (prev === assetId ? null : assetId));
+    setSelectedEditPeriod(null);
   };
 
   const applyRepeat = () => {
@@ -535,20 +781,22 @@ export default function AssetCalendar({
   const periodStatuses = useMemo(() => {
     const result: Record<string, PeriodStatus> = {};
     for (const period of periods as SelectionPeriodDef[]) {
-      result[period.id] = periodStatusForId(period, assets, draftsByAssetByPeriodId, currentUser);
+      result[period.id] = periodStatusForId(period, visualAssets, draftsByAssetByPeriodId, currentUser);
     }
     return result;
-  }, [periods, assets, draftsByAssetByPeriodId, currentUser]);
+  }, [periods, visualAssets, draftsByAssetByPeriodId, currentUser]);
 
   const draftGroups = useMemo(
-    () => buildDraftGroups(assets, periods, draftsByAssetByPeriodId, currentUser) as DraftGroup[],
-    [assets, periods, draftsByAssetByPeriodId, currentUser],
+    () => buildDraftGroups(visualAssets, periods, draftsByAssetByPeriodId, currentUser) as DraftGroup[],
+    [visualAssets, periods, draftsByAssetByPeriodId, currentUser],
   );
 
-  const existingGroups = useMemo(() => buildExistingGroups(assets), [assets]);
+  const existingGroups = useMemo(() => buildExistingGroups(visualAssets), [visualAssets]);
   const activeRequestedRange = activePeriod?.requestedRange ?? null;
 
   const existingDayBars = useMemo(() => {
+    if (mode === 'edit') return [] as InternalDayBar[];
+
     const result: InternalDayBar[] = [];
 
     for (const group of existingGroups) {
@@ -610,6 +858,40 @@ export default function AssetCalendar({
   }, [existingGroups, weekStart, activeRequestedRange, currentUser, mode]);
 
   const draftDayBars = useMemo(() => {
+    if (mode === 'edit') {
+      const result: InternalDayBar[] = [];
+
+      visualAssets.forEach((asset: Asset) => {
+        const periodsForAsset = editPeriodsByAsset[asset.id] ?? [];
+        periodsForAsset.forEach((period: TimePeriod, periodIndex: number) => {
+          const parts = splitPeriodForWeek(period, weekStart);
+          const tooltip = `${asset.name}\n${period.start} -> ${period.end}`;
+
+          parts.forEach((part, partIndex) => {
+            const rect = periodToDisplayRect(part, weekStart);
+            result.push({
+              id: `edit-${asset.id}-${periodIndex}-${partIndex}`,
+              periodId: `${asset.id}__${periodIndex}`,
+              columnKey: asset.id,
+              type: 'draft',
+              dayIndex: rect.dayIndex,
+              start: rect.start,
+              end: rect.end,
+              top: rect.top,
+              height: rect.height,
+              color: asset.color ?? '#2563eb',
+              label: asset.name,
+              tooltip,
+              sortEnd: rect.end.getTime(),
+              status: 'neutral',
+            });
+          });
+        });
+      });
+
+      return result;
+    }
+
     const result: InternalDayBar[] = [];
 
     draftGroups.forEach((group, groupIndex) => {
@@ -652,7 +934,7 @@ export default function AssetCalendar({
     });
 
     return result;
-  }, [draftGroups, weekStart]);
+  }, [draftGroups, weekStart, mode, visualAssets, editPeriodsByAsset]);
 
   const dayLayouts = useMemo(() => {
     return Array.from({ length: 7 }, (_, dayIndex) => {
@@ -687,12 +969,33 @@ export default function AssetCalendar({
     }
   }, [minRepeatWeeks, repeatEveryWeeks]);
 
-  const output = useMemo<CalendarOutput>(
-    () => ({ assets: periodsToOutput(assets, draftsByAssetByPeriodId) }),
-    [assets, draftsByAssetByPeriodId],
-  );
+  const output = useMemo<CalendarOutput>(() => {
+    if (mode === 'edit') {
+      return {
+        assets: assets.map((asset: Asset) => ({
+          id: asset.id,
+          name: asset.name,
+          selectedPeriods: editPeriodsByAsset[asset.id] ?? [],
+        })),
+      };
+    }
+
+    return { assets: periodsToOutput(visualAssets, draftsByAssetByPeriodId) };
+  }, [assets, visualAssets, draftsByAssetByPeriodId, mode, editPeriodsByAsset]);
 
   const weekEnd = useMemo(() => endOfDayInclusive(addDays(weekStart, 6)), [weekStart]);
+
+  const monthAssets = useMemo(() => {
+    if (mode !== 'edit') return visualAssets;
+    return visualAssets.map((asset: Asset) => ({
+      ...asset,
+      existingPeriods: (editPeriodsByAsset[asset.id] ?? []).map((p: TimePeriod) => ({
+        start: p.start,
+        end: p.end,
+        userName: currentUser,
+      })),
+    }));
+  }, [visualAssets, editPeriodsByAsset, mode, currentUser]);
 
   return (
     <section className="calendar-card standalone-calendar">
@@ -701,7 +1004,11 @@ export default function AssetCalendar({
           <button
             type="button"
             onClick={() =>
-              setAnchorDate((prev) => (viewMode === 'week' ? addDays(prev, -7) : addDays(prev, -28)))
+              setAnchorDate((prev) =>
+                viewMode === 'week'
+                  ? addDays(prev, -7)
+                  : new Date(prev.getFullYear(), prev.getMonth() - 1, 1),
+              )
             }
           >
             Prev
@@ -712,7 +1019,11 @@ export default function AssetCalendar({
           <button
             type="button"
             onClick={() =>
-              setAnchorDate((prev) => (viewMode === 'week' ? addDays(prev, 7) : addDays(prev, 28)))
+              setAnchorDate((prev) =>
+                viewMode === 'week'
+                  ? addDays(prev, 7)
+                  : new Date(prev.getFullYear(), prev.getMonth() + 1, 1),
+              )
             }
           >
             Next
@@ -729,9 +1040,9 @@ export default function AssetCalendar({
             </button>
           )}
 
-          {mode !== 'view' && activePeriod && (
+          {mode !== 'view' && (
             <button type="button" onClick={resetActivePeriod}>
-              Cancel selection
+              {mode === 'edit' ? 'Remove selected' : 'Cancel selection'}
             </button>
           )}
         </div>
@@ -782,7 +1093,33 @@ export default function AssetCalendar({
         )}
       </div>
 
-      {mode !== 'view' && (
+      {mode === 'edit' && (
+        <div className="period-panel">
+          <div className="period-chip-list">
+            {visualAssets.map((asset: Asset) => {
+              const active = addForAssetId === asset.id;
+              return (
+                <button
+                  key={asset.id}
+                  type="button"
+                  className={`period-chip ${active ? 'active' : ''}`}
+                  onClick={() => toggleAddForAsset(asset.id)}
+                >
+                  <span
+                    className="period-status-dot"
+                    style={{ backgroundColor: asset.color ?? '#2563eb' }}
+                  />
+                  <span className="period-chip-meta">
+                    {active ? `Click calendar for ${asset.name}` : `Add for ${asset.name}`}
+                  </span>
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
+      {mode !== 'view' && mode !== 'edit' && (
         <div className="period-panel">
           <div className="period-chip-list">
             {periods.map((period: SelectionPeriodDef) => (
@@ -816,8 +1153,8 @@ export default function AssetCalendar({
 
       {viewMode === 'month' ? (
         <MonthOverview
-          assets={assets}
-          weekStart={weekStart}
+          assets={monthAssets}
+          anchorDate={anchorDate}
           draftGroups={draftGroups}
           mode={mode}
           onOpenWeek={(date) => {
@@ -845,13 +1182,19 @@ export default function AssetCalendar({
           {weekDays.map((day, dayIndex) => (
             <div
               key={day.toISOString()}
-              className={`day-column ${dayIndex % 2 === 1 ? 'alt' : ''}`}
+              className={`day-column ${dayIndex % 2 === 1 ? 'alt' : ''} ${mode === 'edit' && addForAssetId ? 'day-column-add-mode' : ''}`}
             >
               {HOURS.map((hour) => (
                 <button
                   type="button"
                   key={`${day.toISOString()}-${hour}`}
-                  className={`hour-cell ${addHours(day, hour) < minSelectableStart && mode !== 'view' ? 'disabled-past' : ''}`}
+                  className={`hour-cell ${
+                    addHours(day, hour) < minSelectableStart &&
+                    mode !== 'view' &&
+                    mode !== 'edit'
+                      ? 'disabled-past'
+                      : ''
+                  }`}
                   onClick={() => handleCellClick(addHours(day, hour))}
                 />
               ))}
@@ -863,52 +1206,87 @@ export default function AssetCalendar({
               )}
 
               {dayLayouts[dayIndex].drafts.map((bar: InternalPositionedDayBar) => {
-                const activeRequestedStart = activePeriod?.requestedRange
-                  ? parseDateTime(activePeriod.requestedRange.start)
-                  : null;
+                const isEditBar = mode === 'edit';
+                const activeRequestedStart =
+                  !isEditBar && activePeriod?.requestedRange
+                    ? parseDateTime(activePeriod.requestedRange.start)
+                    : null;
 
                 const startVisible =
-                  !!activeRequestedStart &&
-                  activeRequestedStart >= weekStart &&
-                  activeRequestedStart <= weekEnd;
+                  isEditBar
+                    ? true
+                    : !!activeRequestedStart &&
+                      activeRequestedStart >= weekStart &&
+                      activeRequestedStart <= weekEnd;
+
+                const selectedEdit =
+                  isEditBar && selectedEditPeriod
+                    ? `${selectedEditPeriod.assetId}__${selectedEditPeriod.index}`
+                    : null;
+
+                const currentBarSelected = isEditBar
+                  ? bar.periodId === selectedEdit
+                  : bar.periodId === activePeriodId;
 
                 const showTopHandle =
-                  bar.periodId === activePeriodId &&
-                  activePeriod?.requestedRange &&
-                  bar.start.getTime() === parseDateTime(activePeriod.requestedRange.start).getTime();
+                  currentBarSelected &&
+                  (isEditBar
+                    ? true
+                    : !!activePeriod?.requestedRange &&
+                      bar.start.getTime() ===
+                        parseDateTime(activePeriod.requestedRange.start).getTime());
 
-                const activeBarsForPeriod = dayLayouts
+                const relevantBars = dayLayouts
                   .flatMap((layout) => layout.drafts)
-                  .filter((draftBar: InternalPositionedDayBar) => draftBar.periodId === activePeriodId);
+                  .filter((draftBar: InternalPositionedDayBar) =>
+                    isEditBar
+                      ? draftBar.periodId === bar.periodId
+                      : draftBar.periodId === activePeriodId,
+                  );
 
                 const latestVisibleEndMs =
-                  activeBarsForPeriod.length > 0
-                    ? Math.max(...activeBarsForPeriod.map((draftBar: InternalPositionedDayBar) => draftBar.end.getTime()))
+                  relevantBars.length > 0
+                    ? Math.max(...relevantBars.map((draftBar: InternalPositionedDayBar) => draftBar.end.getTime()))
                     : null;
 
                 const showBottomHandle =
-                  bar.periodId === activePeriodId &&
+                  currentBarSelected &&
                   latestVisibleEndMs !== null &&
                   bar.end.getTime() === latestVisibleEndMs;
 
                 const visibleDragRangeForEnd =
-                  activePeriod?.requestedRange && latestVisibleEndMs !== null
-                    ? {
-                        start: activePeriod.requestedRange.start,
-                        end: formatDateTime(new Date(latestVisibleEndMs)),
-                      }
+                  latestVisibleEndMs !== null
+                    ? isEditBar
+                      ? (() => {
+                          const [assetId, indexText] = (bar.periodId ?? '').split('__');
+                          const idx = Number(indexText);
+                          const base = editPeriodsByAsset[assetId]?.[idx];
+                          return base
+                            ? {
+                                start: base.start,
+                                end: formatDateTime(new Date(latestVisibleEndMs)),
+                              }
+                            : undefined;
+                        })()
+                      : activePeriod?.requestedRange
+                        ? {
+                            start: activePeriod.requestedRange.start,
+                            end: formatDateTime(new Date(latestVisibleEndMs)),
+                          }
+                        : undefined
                     : undefined;
 
-                const canMoveWholePeriod =
-                  bar.periodId === activePeriodId &&
-                  !!startVisible &&
-                  !!activeRequestedStart &&
-                  bar.start.getTime() === activeRequestedStart.getTime();
+                const canMoveWholePeriod = isEditBar
+                  ? true
+                  : currentBarSelected &&
+                    !!startVisible &&
+                    !!activeRequestedStart &&
+                    bar.start.getTime() === activeRequestedStart.getTime();
 
                 return (
                   <div
                     key={bar.id}
-                    className={`reservation-block draft ${bar.periodId === activePeriodId ? 'active' : ''} status-${bar.status ?? 'neutral'}`}
+                    className={`reservation-block draft ${currentBarSelected ? 'active' : ''} status-${bar.status ?? 'neutral'}`}
                     style={{
                       top: bar.top,
                       height: bar.height,
@@ -919,17 +1297,30 @@ export default function AssetCalendar({
                     title={bar.tooltip}
                     onMouseDown={(e) => {
                       if (!bar.periodId) return;
-                      setActivePeriodId(bar.periodId);
-                      if (mode !== 'checkout' && canMoveWholePeriod) {
+                      if (isEditBar) {
+                        const [assetId, indexText] = bar.periodId.split('__');
+                        setSelectedEditPeriod({ assetId, index: Number(indexText) });
+                        setAddForAssetId(null);
+                      } else {
+                        setActivePeriodId(bar.periodId);
+                      }
+                      if ((mode === 'edit' || mode !== 'checkout') && canMoveWholePeriod) {
                         beginDrag('move', e, bar.periodId);
                       }
                     }}
                     onClick={(e) => {
                       e.stopPropagation();
-                      if (bar.periodId) setActivePeriodId(bar.periodId);
+                      if (!bar.periodId) return;
+                      if (isEditBar) {
+                        const [assetId, indexText] = bar.periodId.split('__');
+                        setSelectedEditPeriod({ assetId, index: Number(indexText) });
+                        setAddForAssetId(null);
+                      } else {
+                        setActivePeriodId(bar.periodId);
+                      }
                     }}
                   >
-                    {showTopHandle && mode === 'reserve' && (
+                    {showTopHandle && mode !== 'checkout' && (
                       <div
                         className="drag-handle top"
                         onMouseDown={(e) => {
@@ -941,7 +1332,7 @@ export default function AssetCalendar({
 
                     <div className="block-label">{bar.label}</div>
 
-                    {showBottomHandle && (mode === 'reserve' || mode === 'checkout') && (
+                    {showBottomHandle && mode !== 'view' && (
                       <div
                         className="drag-handle bottom"
                         onMouseDown={(e) => {
@@ -976,6 +1367,32 @@ export default function AssetCalendar({
           ))}
         </div>
       )}
+
+      {omittedAssets.length > 0 && (
+        <div className="calendar-message calendar-message-info">
+          <div className="calendar-message-title">
+            A few assets were left out of the current visual view to keep the calendar readable.
+          </div>
+          <div className="calendar-message-list">
+            {omittedAssets.map((asset: Asset) => (
+              <div key={asset.id} className="calendar-message-row">
+                <span>{asset.name}</span>
+                <span>{asset.id}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {selectionGroupLimitMessage && (
+        <div className="calendar-message calendar-message-soft-warning">
+          {selectionGroupLimitMessage}
+        </div>
+      )}
     </section>
   );
+}
+
+function modeIsColorDense(mode: CalendarInput['mode']) {
+  return mode === 'view' || mode === 'edit';
 }

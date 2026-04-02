@@ -22,20 +22,21 @@ import {
 
 export default function MonthOverview({
   assets,
-  weekStart,
+  anchorDate,
   draftGroups,
   mode,
   onOpenWeek,
 }: {
   assets: Asset[];
-  weekStart: Date;
+  anchorDate: Date;
   draftGroups: DraftGroup[];
   mode: CalendarMode;
   onOpenWeek: (date: Date) => void;
 }) {
-  const monthStart = new Date(weekStart.getFullYear(), weekStart.getMonth(), 1);
+  const monthStart = new Date(anchorDate.getFullYear(), anchorDate.getMonth(), 1);
   const firstCell = getWeekStart(monthStart);
   const cells = Array.from({ length: 42 }, (_, i: number) => addDays(firstCell, i));
+  const today = new Date();
 
   const selectedPeriodsByStatus = {
     good: draftGroups.filter((g: DraftGroup) => g.status === 'good'),
@@ -177,11 +178,16 @@ export default function MonthOverview({
     return { active, left, right, tooltip };
   }
 
-  const monthRows = mode === 'view' ? assets.length : 1;
+  const colorMode = mode === 'view' || mode === 'edit';
+  const monthRows = colorMode ? assets.length : 1;
   const stripHeight = monthRows * 12;
 
   return (
     <div className="month-view">
+      <div className="month-title">
+        {anchorDate.toLocaleDateString('fi-FI', { month: 'long', year: 'numeric' })}
+      </div>
+
       <div className="month-grid">
         {DAY_NAMES.map((d: string) => (
           <div key={d} className="month-head">
@@ -191,22 +197,53 @@ export default function MonthOverview({
 
         {cells.map((date: Date, index: number) => {
           const existingBlocks =
-            mode === 'view'
-              ? viewModeBlocksForDate(date)
-              : selectionModeBlocksForDate(date);
+            colorMode ? viewModeBlocksForDate(date) : selectionModeBlocksForDate(date);
 
           const good = draftFlags('good', date, index);
           const warn = draftFlags('warning', date, index);
           const error = draftFlags('error', date, index);
 
+          const isOutsideMonth =
+            date.getMonth() !== monthStart.getMonth() ||
+            date.getFullYear() !== monthStart.getFullYear();
+
+          const isToday =
+            date.getDate() === today.getDate() &&
+            date.getMonth() === today.getMonth() &&
+            date.getFullYear() === today.getFullYear();
+
+          const cellTooltipParts: string[] = [];
+
+          existingBlocks.forEach((block: MonthBlock) => {
+            if (block.tooltip) cellTooltipParts.push(block.tooltip);
+          });
+
+          if (good.tooltip) {
+            cellTooltipParts.push(`Selected periods:\n${good.tooltip}`);
+          }
+          if (warn.tooltip) {
+            cellTooltipParts.push(`Partially limited periods:\n${warn.tooltip}`);
+          }
+          if (error.tooltip) {
+            cellTooltipParts.push(`Unavailable periods:\n${error.tooltip}`);
+          }
+
+          const cellTooltip = cellTooltipParts.join('\n\n');
+
           return (
             <button
               type="button"
               key={date.toISOString()}
-              className="month-cell month-cell-button"
+              className={`month-cell month-cell-button ${isOutsideMonth ? 'month-cell-dim' : ''} ${isToday ? 'month-cell-today' : ''}`}
               onClick={() => onOpenWeek(date)}
+              title={cellTooltip}
             >
-              <div className="month-date">{pad(date.getDate())}</div>
+              <div className="month-date">
+                <span className="month-date-weekday">
+                  {DAY_NAMES[(date.getDay() + 6) % 7]}
+                </span>
+                <span>{pad(date.getDate())}.{pad(date.getMonth() + 1)}</span>
+              </div>
 
               <div className="month-day-strip" style={{ height: `${stripHeight}px` }}>
                 {existingBlocks.map((block: MonthBlock, i: number) => (

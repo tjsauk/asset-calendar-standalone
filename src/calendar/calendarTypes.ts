@@ -1,4 +1,4 @@
-export type CalendarMode = 'view' | 'reserve' | 'checkout';
+export type CalendarMode = 'view' | 'reserve' | 'checkout' | 'edit';
 export type CalendarViewMode = 'week' | 'month';
 
 export type TimePeriod = {

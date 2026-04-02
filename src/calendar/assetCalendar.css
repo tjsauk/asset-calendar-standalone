@@ -25,6 +25,7 @@ button, select, input { font: inherit; }
 .time-cell{ height:16px; border-bottom:1px solid #d0d9e4; font-size:9px; display:flex; align-items:flex-start; justify-content:center; color:#334155; }
 .day-column{ position:relative; grid-row:2; height:384px; border-right:1px solid #94a3b8; background:repeating-linear-gradient(to bottom,transparent 0,transparent 15px,#cbd5e1 15px,#cbd5e1 16px); }
 .day-column.alt{ background-color:#f8fbff; }
+.period-chip.active {border-color: #2563eb;background: #eff6ff;}
 .hour-cell{ display:block; width:100%; height:16px; border:0; padding:0; margin:0; cursor:pointer; background:transparent; }
 .disabled-past{ cursor:not-allowed; }
 .now-line{ position:absolute; left:0; right:0; height:2px; background:#dc2626; z-index:6; pointer-events:none; }
@@ -42,7 +43,11 @@ button, select, input { font: inherit; }
 .month-head{ background:#f8fafc; border-right:1px solid #000; border-bottom:1px solid #000; padding:8px; text-align:center; font-size:12px; font-weight:700; }
 .month-cell{ min-height:112px; padding:8px; background:#fff; position:relative; border-right:1px solid #000; border-bottom:1px solid #000; }
 .month-cell-button{ text-align:left; cursor:pointer; appearance:none; -webkit-appearance:none; border-radius:0; }
-.month-date{ font-size:12px; font-weight:700; margin-bottom:8px; position:relative; z-index:3; }
+.month-title {padding: 8px 12px;border-bottom: 1px solid #000000;background: #f8fafc;font-weight: 700;text-transform: capitalize;}
+.month-cell-dim {opacity: 0.55;}
+.month-cell-today {box-shadow: inset 0 0 0 2px #dc2626;}
+.month-date {font-size: 12px;font-weight: 700;margin-bottom: 8px;position: relative;z-index: 3;display: flex;flex-direction: column;gap: 2px;}
+.month-date-weekday {font-size: 10px;font-weight: 600;color: #475569;}
 .month-day-strip{ position:absolute; left:6px; right:6px; top:30px; z-index:0; }
 .month-existing-block{ position:absolute; height:10px; border-radius:3px; opacity:.95; border:1px solid rgba(0,0,0,.18); }
 .month-draft-outline{ position:absolute; left:6px; right:6px; top:28px; bottom:8px; background:transparent; z-index:1; border-radius:8px; pointer-events:auto; }
@@ -51,3 +56,11 @@ button, select, input { font: inherit; }
 .month-draft-outline.error{ border:2px solid #dc2626; }
 .month-draft-outline.continue-left{ left:0; border-left:0; border-top-left-radius:0; border-bottom-left-radius:0; }
 .month-draft-outline.continue-right{ right:0; border-right:0; border-top-right-radius:0; border-bottom-right-radius:0; }
+.calendar-message {margin-top: 12px;padding: 10px 12px;border-radius: 10px;border: 1px solid #cbd5e1;background: #f8fafc;color: #334155;font-size: 0.92rem;}
+.calendar-message-info {background: #f8fafc;border-color: #cbd5e1;}
+.calendar-message-soft-warning {background: #fffbea;border-color: #facc15;color: #713f12;}
+.calendar-message-title {font-weight: 700;margin-bottom: 8px;}
+.calendar-message-list {display: flex;flex-direction: column;gap: 6px;}
+.calendar-message-row {display: grid;grid-template-columns: minmax(0, 1fr) auto;gap: 12px;padding: 6px 8px;border-radius: 8px;background: #ffffff;border: 1px solid #e2e8f0;}
+.month-cell-button {position: relative;}
+
