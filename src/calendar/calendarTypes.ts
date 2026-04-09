@@ -59,6 +59,7 @@ export type SelectionPeriodDef = {
 export type DraftGroup = {
   periodId: string;
   groupKey: string;
+  displayColumnKey: string;
   assets: Asset[];
   periods: TimePeriod[];
   status: PeriodStatus;

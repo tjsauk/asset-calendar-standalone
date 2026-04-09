@@ -403,6 +403,7 @@ export function buildDraftGroups(
   const groups: Array<{
     periodId: string;
     groupKey: string;
+    displayColumnKey: string;
     assets: Asset[];
     periods: TimePeriod[];
     status: PeriodStatus;
@@ -411,21 +412,33 @@ export function buildDraftGroups(
   for (const period of periods) {
     const byAsset = draftsByAssetByPeriodId[period.id] ?? {};
     const status = periodStatusForId(period, assets, draftsByAssetByPeriodId, currentUser);
-    const groupMap = new Map<string, any>();
+
+    const groupMap = new Map<
+      string,
+      {
+        periodId: string;
+        groupKey: string;
+        displayColumnKey: string;
+        assets: Asset[];
+        periods: TimePeriod[];
+        status: PeriodStatus;
+      }
+    >();
 
     for (const asset of assets) {
       const selected = byAsset[asset.id] ?? [];
       if (selected.length === 0) continue;
 
-      const key = normalizePeriodsForKey(selected);
-      const existing = groupMap.get(key);
+      const contentKey = normalizePeriodsForKey(selected);
+      const existing = groupMap.get(contentKey);
 
       if (existing) {
         existing.assets.push(asset);
       } else {
-        groupMap.set(key, {
+        groupMap.set(contentKey, {
           periodId: period.id,
-          groupKey: `${period.id}::${key}`,
+          groupKey: `${period.id}::${contentKey}`,
+          displayColumnKey: '',
           assets: [asset],
           periods: selected,
           status,
@@ -433,7 +446,15 @@ export function buildDraftGroups(
       }
     }
 
-    groups.push(...groupMap.values());
+    for (const group of groupMap.values()) {
+      const assetSetKey = group.assets
+        .map((asset) => asset.id)
+        .sort()
+        .join('|');
+
+      group.displayColumnKey = assetSetKey;
+      groups.push(group);
+    }
   }
 
   return groups;

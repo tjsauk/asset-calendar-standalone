@@ -9,7 +9,7 @@
     <div id="asset-calendar-root"></div>
     <script>
       window.assetCalendarInput = {
-        mode: 'edit',
+        mode: 'reserve',
         currentUser: 'General kenobi',
         continuousCutMode: true,
         assets: [
@@ -17,16 +17,91 @@
             id: 'asset-a',
             name: 'Robot Arm',
             existingPeriods: [
-              { start: '2026-04-08 10:00', end: '2026-04-08 13:59', userName: 'Alice' },
-              { start: '2026-04-10 08:00', end: '2026-04-10 11:59', userName: 'General kenobi' }
+              { start: '2026-04-14 08:00', end: '2026-04-14 11:59', userName: 'Alice' },
+              { start: '2026-04-14 13:00', end: '2026-04-14 16:59', userName: 'Bob' },
+              { start: '2026-04-18 09:00', end: '2026-04-20 16:59', userName: 'Diana' },
+              { start: '2026-04-28 08:00', end: '2026-04-28 11:59', userName: 'General kenobi' }
             ]
           },
           {
             id: 'asset-b',
             name: 'Battery Cycler',
             existingPeriods: [
-              { start: '2026-04-07 15:00', end: '2026-04-07 18:59', userName: 'Bob' },
-              { start: '2026-04-09 10:00', end: '2026-04-09 11:59', userName: 'Alice' }
+              { start: '2026-04-15 08:00', end: '2026-04-15 17:59', userName: 'Charlie' },
+              { start: '2026-04-21 08:00', end: '2026-04-21 11:59', userName: 'General kenobi' },
+              { start: '2026-04-21 13:00', end: '2026-04-21 17:59', userName: 'General kenobi' },
+              { start: '2026-04-29 09:00', end: '2026-04-29 15:59', userName: 'Alice' }
+            ]
+          },
+          {
+            id: 'asset-c',
+            name: 'Thermal Camera',
+            existingPeriods: [
+              { start: '2026-04-16 08:00', end: '2026-04-16 17:59', userName: 'Eve' },
+              { start: '2026-04-18 09:00', end: '2026-04-18 12:59', userName: 'General kenobi' },
+              { start: '2026-04-24 08:00', end: '2026-04-24 17:59', userName: 'Frank' }
+            ]
+          },
+          {
+            id: 'asset-d',
+            name: 'Lidar Scanner',
+            existingPeriods: [
+              { start: '2026-04-17 08:00', end: '2026-04-17 17:59', userName: 'Charlie' },
+              { start: '2026-04-18 09:00', end: '2026-04-20 16:59', userName: 'Diana' },
+              { start: '2026-04-25 10:00', end: '2026-04-25 14:59', userName: 'Bob' }
+            ]
+          },
+          {
+            id: 'asset-e',
+            name: 'Pressure Rig',
+            existingPeriods: [
+              { start: '2026-04-18 09:00', end: '2026-04-20 16:59', userName: 'Diana' },
+              { start: '2026-04-22 08:00', end: '2026-04-22 11:59', userName: 'Alice' },
+              { start: '2026-04-22 14:00', end: '2026-04-22 17:59', userName: 'Eve' }
+            ]
+          },
+          {
+            id: 'asset-f',
+            name: 'Oscilloscope',
+            existingPeriods: [
+              { start: '2026-04-18 09:00', end: '2026-04-20 16:59', userName: 'Diana' },
+              { start: '2026-04-23 08:00', end: '2026-04-23 10:59', userName: 'General kenobi' },
+              { start: '2026-04-23 11:00', end: '2026-04-23 13:59', userName: 'Alice' },
+              { start: '2026-04-23 15:00', end: '2026-04-23 17:59', userName: 'Bob' }
+            ]
+          },
+          {
+            id: 'asset-g',
+            name: 'Vacuum Chamber',
+            existingPeriods: [
+              { start: '2026-04-18 09:00', end: '2026-04-20 16:59', userName: 'Diana' },
+              { start: '2026-04-26 08:00', end: '2026-04-26 17:59', userName: 'Charlie' }
+            ]
+          },
+          {
+            id: 'asset-h',
+            name: '3D Printer',
+            existingPeriods: [
+              { start: '2026-04-19 08:00', end: '2026-04-19 17:59', userName: 'Alice' },
+              { start: '2026-04-27 08:00', end: '2026-04-27 11:59', userName: 'General kenobi' },
+              { start: '2026-04-27 12:00', end: '2026-04-27 17:59', userName: 'General kenobi' }
+            ]
+          },
+          {
+            id: 'asset-i',
+            name: 'Environmental Sensor Kit',
+            existingPeriods: [
+              { start: '2026-04-20 08:00', end: '2026-04-20 17:59', userName: 'Frank' },
+              { start: '2026-04-24 09:00', end: '2026-04-24 12:59', userName: 'General kenobi' },
+              { start: '2026-04-24 13:00', end: '2026-04-24 16:59', userName: 'General kenobi' }
+            ]
+          },
+          {
+            id: 'asset-j',
+            name: 'Calibration Bench',
+            existingPeriods: [
+              { start: '2026-04-21 08:00', end: '2026-04-21 17:59', userName: 'Eve' },
+              { start: '2026-04-30 08:00', end: '2026-04-30 17:59', userName: 'Bob' }
             ]
           }
         ]
