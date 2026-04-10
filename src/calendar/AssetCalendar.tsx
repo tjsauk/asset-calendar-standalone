@@ -778,49 +778,89 @@ export default function AssetCalendar({
 
     const clickedHour = startOfHour(date);
 
-    if (mode === 'edit') {
-      if (!addForTarget) return;
+      if (mode === 'edit') {
+        if (addForTarget) {
+          const proposed = buildOneHourPeriod(clickedHour);
+          const asset = visualAssets.find((a) => a.id === addForTarget.assetId);
+          if (!asset) return;
 
-      const proposed = buildOneHourPeriod(clickedHour);
-      const asset = visualAssets.find((a) => a.id === addForTarget.assetId);
-      if (!asset) return;
+          setEditPeriodsByAssetUser((prev) => {
+            const assetBlock = { ...(prev[addForTarget.assetId] ?? {}) };
+            const userPeriods = [...(assetBlock[addForTarget.userName] ?? [])];
+            userPeriods.push(proposed);
+            const newIndex = userPeriods.length - 1;
+            assetBlock[addForTarget.userName] = userPeriods;
 
-      setEditPeriodsByAssetUser((prev) => {
-        const assetBlock = { ...(prev[addForTarget.assetId] ?? {}) };
-        const userPeriods = [...(assetBlock[addForTarget.userName] ?? [])];
-        userPeriods.push(proposed);
-        const newIndex = userPeriods.length - 1;
-        assetBlock[addForTarget.userName] = userPeriods;
+            const blocked = getBlockedReservationsForAsset(asset, editableUsers);
+            const clamped = clampEditPeriodWithinAsset(
+              assetBlock,
+              blocked,
+              addForTarget.userName,
+              newIndex,
+              proposed,
+            );
+            if (!clamped) return prev;
 
-        const blocked = getBlockedReservationsForAsset(asset, editableUsers);
-        const clamped = clampEditPeriodWithinAsset(
-          assetBlock,
-          blocked,
-          addForTarget.userName,
-          newIndex,
-          proposed,
-        );
-        if (!clamped) return prev;
+            userPeriods[newIndex] = clamped;
+            assetBlock[addForTarget.userName] = userPeriods;
 
-        userPeriods[newIndex] = clamped;
-        assetBlock[addForTarget.userName] = userPeriods;
+            return {
+              ...prev,
+              [addForTarget.assetId]: assetBlock,
+            };
+          });
 
-        return {
-          ...prev,
-          [addForTarget.assetId]: assetBlock,
-        };
-      });
+          const newIndex =
+            editPeriodsByAssetUser[addForTarget.assetId]?.[addForTarget.userName]?.length ?? 0;
 
-      const newIndex =
-        editPeriodsByAssetUser[addForTarget.assetId]?.[addForTarget.userName]?.length ?? 0;
-      setSelectedEditPeriod({
-        assetId: addForTarget.assetId,
-        userName: addForTarget.userName,
-        index: newIndex,
-      });
-      setAddForTarget(null);
-      return;
-    }
+          setSelectedEditPeriod({
+            assetId: addForTarget.assetId,
+            userName: addForTarget.userName,
+            index: newIndex,
+          });
+          setAddForTarget(null);
+          return;
+        }
+
+        if (!selectedEditPeriod) return;
+
+        const selectedRange =
+          editPeriodsByAssetUser[selectedEditPeriod.assetId]?.[selectedEditPeriod.userName]?.[
+            selectedEditPeriod.index
+          ] ?? null;
+
+        if (!selectedRange) return;
+
+        const currentStart = parseDateTime(selectedRange.start);
+        const currentEnd = parseDateTime(selectedRange.end);
+
+        if (clickedHour < currentStart) {
+          updateEditPeriodRange(
+            selectedEditPeriod.assetId,
+            selectedEditPeriod.userName,
+            selectedEditPeriod.index,
+            {
+              start: formatDateTime(clickedHour),
+              end: formatDateTime(currentEnd),
+            },
+          );
+          return;
+        }
+
+        if (clickedHour > currentEnd) {
+          updateEditPeriodRange(
+            selectedEditPeriod.assetId,
+            selectedEditPeriod.userName,
+            selectedEditPeriod.index,
+            {
+              start: formatDateTime(currentStart),
+              end: formatDateTime(addMinutes(addHours(clickedHour, 1), -1)),
+            },
+          );
+        }
+
+        return;
+      }
 
     if (!activePeriod) return;
     if (clickedHour < minSelectableStart) return;
