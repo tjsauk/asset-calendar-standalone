@@ -18,7 +18,7 @@ button, select, input { font: inherit; }
 .period-chip.status-warning .period-status-dot{ background:#ca8a04; }
 .period-chip.status-error .period-status-dot{ background:#dc2626; }
 .period-chip.status-neutral .period-status-dot{ background:#94a3b8; }
-.week-shell{ display:grid; grid-template-columns:62px repeat(7,1fr); grid-template-rows:42px auto; border:1px solid #94a3b8; border-radius:10px; overflow:hidden; user-select:none; }
+.week-shell{ --time-col-width:62px; display:grid; grid-template-columns:var(--time-col-width) repeat(7,1fr); grid-template-rows:42px auto; border:1px solid #94a3b8; border-radius:10px; overflow:hidden; user-select:none; }
 .week-header-spacer{ grid-column:1; grid-row:1; background:#e2e8f0; border-right:1px solid #94a3b8; border-bottom:2px solid #64748b; }
 .week-day-header{ background:#e2e8f0; border-bottom:2px solid #64748b; border-right:1px solid #94a3b8; display:flex; align-items:center; justify-content:center; font-size:12px; font-weight:700; height:42px; }
 .time-column{ grid-column:1; grid-row:2; background:#f8fafc; border-right:2px solid #64748b; }
@@ -69,4 +69,31 @@ button, select, input { font: inherit; }
 .edit-period-chip-asset {font-weight: 700;color: #0f172a;white-space: nowrap;}
 .edit-period-chip-user {color: #475569;white-space: nowrap;}
 .edit-period-chip-range {color: #475569;min-width: 0;overflow: hidden;text-overflow: ellipsis;white-space: nowrap;}
+.calendar-toolbar-row{display:flex;justify-content:space-between;gap:8px;flex-wrap:wrap;}
 
+.toolbar-nav-row,
+.toolbar-action-row{display:flex;gap:8px;flex-wrap:wrap;align-items:center;}
+.period-chip-toggle{padding:6px 10px;border:1px solid #cbd5e1;border-radius:999px;background:#fff;cursor:pointer;font-size:.82rem;color:#475569;}
+
+@media (max-width: 768px) {
+  .calendar-toolbar{gap:8px;}
+  .calendar-toolbar-row{width:100%;}
+  .toolbar-nav-row,
+  .toolbar-action-row{width:100%;display:grid;grid-template-columns:repeat(4, minmax(0, 1fr));gap:6px;}
+  .mobile-repeat-row{width:100%;display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-top:6px;}
+  .mobile-repeat-row label{display:flex;align-items:center;gap:4px;flex-wrap:nowrap;}
+  .period-chip-list{flex-direction:column;align-items:stretch;}
+  .period-chip{width:100%;justify-content:space-between;}
+  .period-chip-main{min-width:0;width:100%;justify-content:flex-start;}
+  .period-chip-meta,
+  .edit-period-chip-meta{min-width:0;}
+  .week-shell{--time-col-width: 41px;grid-template-columns:var(--time-col-width) repeat(7,1fr);}
+  .week-day-header{font-size:10px;padding:0 2px;}
+  .time-cell{font-size:8px;}
+  .month-head{padding:4px 2px;font-size:10px;}
+  .month-cell{min-height:92px;padding:4px;}
+  .month-date{font-size:10px;gap:1px;}
+  .month-date-weekday{font-size:9px;}
+  .month-day-strip{left:3px;right:3px;}
+  .month-draft-outline{left:3px;right:3px;}
+}

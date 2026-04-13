@@ -105,6 +105,7 @@ type EditPeriodChip = {
   color: string;
 };
 
+const MOBILE_BREAKPOINT = 768;
 const TIME_COL_W = 62;
 const HEADER_H = 42;
 const DEFAULT_COLORS = [
@@ -454,7 +455,14 @@ export default function AssetCalendar({
   const [now, setNow] = useState(new Date());
   const [repeatEveryWeeks, setRepeatEveryWeeks] = useState(1);
   const [repeatCount, setRepeatCount] = useState(1);
-
+  const [repeatEveryWeeksInput, setRepeatEveryWeeksInput] = useState('1');
+  const [repeatCountInput, setRepeatCountInput] = useState('1');
+  const [isMobile, setIsMobile] = useState(
+    typeof window !== 'undefined' ? window.innerWidth <= MOBILE_BREAKPOINT : false,
+  );
+  const [chipsCollapsed, setChipsCollapsed] = useState(
+    typeof window !== 'undefined' ? window.innerWidth <= MOBILE_BREAKPOINT : false,
+  );
   const [editPeriodsByAssetUser, setEditPeriodsByAssetUser] = useState<
     Record<string, Record<string, TimePeriod[]>>
   >({});
@@ -539,6 +547,33 @@ export default function AssetCalendar({
 
     return chips;
   }, [visualAssets, editPeriodsByAssetUser, editableUsers]);
+
+  const selectedEditChipKey =
+    selectedEditPeriod
+      ? `${selectedEditPeriod.assetId}__${selectedEditPeriod.userName}__${selectedEditPeriod.index}`
+      : null;
+
+  const visibleEditPeriodChips = useMemo(() => {
+    if (!isMobile || !chipsCollapsed) return editPeriodChips;
+
+    if (selectedEditChipKey) {
+      const selectedChip = editPeriodChips.find((chip) => chip.key === selectedEditChipKey);
+      return selectedChip ? [selectedChip] : editPeriodChips.slice(0, 1);
+    }
+
+    return editPeriodChips.slice(0, 1);
+  }, [isMobile, chipsCollapsed, editPeriodChips, selectedEditChipKey]);
+
+  const hiddenEditChipCount = Math.max(0, editPeriodChips.length - visibleEditPeriodChips.length);
+
+  const visibleReservePeriods = useMemo(() => {
+    if (!isMobile || !chipsCollapsed) return periods;
+
+    const selectedPeriod = periods.find((period) => period.id === activePeriodId);
+    return selectedPeriod ? [selectedPeriod] : periods.slice(0, 1);
+  }, [isMobile, chipsCollapsed, periods, activePeriodId]);
+
+  const hiddenReserveChipCount = Math.max(0, periods.length - visibleReservePeriods.length);
 
   const draftsByAssetByPeriodId = useMemo(() => {
     const result: Record<string, Record<string, TimePeriod[]>> = {};
@@ -645,6 +680,14 @@ export default function AssetCalendar({
     const id = window.setInterval(() => setNow(new Date()), 60_000);
     return () => window.clearInterval(id);
   }, []);
+
+  useEffect(() => {
+    setRepeatEveryWeeksInput(String(repeatEveryWeeks));
+  }, [repeatEveryWeeks]);
+
+  useEffect(() => {
+    setRepeatCountInput(String(repeatCount));
+  }, [repeatCount]);
 
   useEffect(() => {
     if (mode !== 'checkout') return;
@@ -1320,108 +1363,146 @@ export default function AssetCalendar({
   return (
     <section className="calendar-card standalone-calendar">
       <div className="calendar-toolbar calendar-toolbar-main">
-        <div className="toolbar-left">
-          <button
-            type="button"
-            onClick={() =>
-              setAnchorDate((prev) =>
-                viewMode === 'week'
-                  ? addDays(prev, -7)
-                  : new Date(prev.getFullYear(), prev.getMonth() - 1, 1),
-              )
-            }
-          >
-            Prev
-          </button>
-
-          <button type="button" onClick={() => setAnchorDate(new Date())}>
-            Today
-          </button>
-
-          <button
-            type="button"
-            onClick={() =>
-              setAnchorDate((prev) =>
-                viewMode === 'week'
-                  ? addDays(prev, 7)
-                  : new Date(prev.getFullYear(), prev.getMonth() + 1, 1),
-              )
-            }
-          >
-            Next
-          </button>
-
-          <select
-            value={viewMode}
-            onChange={(e) => setViewMode(e.target.value as CalendarViewMode)}
-          >
-            <option value="week">Week view</option>
-            <option value="month">Month view</option>
-          </select>
-
-          {mode === 'reserve' && (
-            <button type="button" onClick={addNewPeriod}>
-              Add new
+        <div className="calendar-toolbar-row calendar-toolbar-row-top">
+          <div className="toolbar-left toolbar-nav-row">
+            <button
+              type="button"
+              onClick={() =>
+                setAnchorDate((prev) =>
+                  viewMode === 'week'
+                    ? addDays(prev, -7)
+                    : new Date(prev.getFullYear(), prev.getMonth() - 1, 1),
+                )
+              }
+            >
+              Prev
             </button>
-          )}
 
-          {mode !== 'view' && (
-            <button type="button" onClick={resetActivePeriod}>
-              {mode === 'edit' ? 'Remove selected' : 'Remove selected'}
+            <button type="button" onClick={() => setAnchorDate(new Date())}>
+              Today
             </button>
-          )}
+
+            <button
+              type="button"
+              onClick={() =>
+                setAnchorDate((prev) =>
+                  viewMode === 'week'
+                    ? addDays(prev, 7)
+                    : new Date(prev.getFullYear(), prev.getMonth() + 1, 1),
+                )
+              }
+            >
+              Next
+            </button>
+
+            <select
+              value={viewMode}
+              onChange={(e) => setViewMode(e.target.value as CalendarViewMode)}
+            >
+              <option value="week">Week view</option>
+              <option value="month">Month view</option>
+            </select>
+          </div>
         </div>
 
-        {mode === 'reserve' && activePeriod?.requestedRange && (
-          <div className="toolbar-right repeat-inline">
-            <span className="repeat-title">Repeat selected</span>
+        <div className="calendar-toolbar-row calendar-toolbar-row-bottom">
+          <div className="toolbar-left toolbar-action-row">
+            {mode === 'reserve' && (
+              <button type="button" onClick={addNewPeriod}>
+                Add new
+              </button>
+            )}
 
-            <label>
-              every
-              <input
-                type="number"
-                min={minRepeatWeeks}
-                step={1}
-                value={repeatEveryWeeks}
-                onChange={(e) =>
-                  setRepeatEveryWeeks(
-                    Math.max(minRepeatWeeks, Number(e.target.value) || minRepeatWeeks),
-                  )
-                }
-              />
-              weeks
-            </label>
+            {mode !== 'view' && (
+              <button type="button" onClick={resetActivePeriod}>
+                Remove selected
+              </button>
+            )}
 
-            <label>
-              times
-              <input
-                type="number"
-                min={1}
-                step={1}
-                value={repeatCount}
-                onChange={(e) => setRepeatCount(Math.max(1, Number(e.target.value) || 1))}
-              />
-            </label>
-
-            <button type="button" onClick={applyRepeat}>
-              Apply
-            </button>
+            {mode !== 'view' && onConfirm && (
+              <button type="button" onClick={() => onConfirm(output)}>
+                Confirm
+              </button>
+            )}
           </div>
-        )}
 
-        {mode !== 'view' && onConfirm && (
-          <div className="toolbar-right">
-            <button type="button" onClick={() => onConfirm(output)}>
-              Confirm
-            </button>
-          </div>
-        )}
+          {mode === 'reserve' && activePeriod?.requestedRange && (
+            <div className="toolbar-right repeat-inline mobile-repeat-row">
+              <span className="repeat-title">Repeat selected</span>
+
+              <label>
+                every
+                <input
+                  type="number"
+                  min={1}
+                  step={1}
+                  value={repeatEveryWeeksInput}
+                  onFocus={(e) => e.target.select()}
+                  onClick={(e) => e.currentTarget.select()}
+                  onChange={(e) => {
+                    setRepeatEveryWeeksInput(e.target.value);
+
+                    if (e.target.value === '') return;
+
+                    const parsed = Number(e.target.value);
+                    if (Number.isNaN(parsed)) return;
+
+                    setRepeatEveryWeeks(Math.max(minRepeatWeeks, parsed));
+                  }}
+                  onBlur={() => {
+                    const parsed = Number(repeatEveryWeeksInput);
+                    const safeValue = Number.isNaN(parsed)
+                      ? minRepeatWeeks
+                      : Math.max(minRepeatWeeks, parsed);
+
+                    setRepeatEveryWeeks(safeValue);
+                    setRepeatEveryWeeksInput(String(safeValue));
+                  }}
+                />
+                weeks
+              </label>
+
+              <label>
+                times
+                <input
+                  type="number"
+                  min={1}
+                  step={1}
+                  value={repeatCountInput}
+                  onFocus={(e) => e.target.select()}
+                  onClick={(e) => e.currentTarget.select()}
+                  onChange={(e) => {
+                    setRepeatCountInput(e.target.value);
+
+                    if (e.target.value === '') return;
+
+                    const parsed = Number(e.target.value);
+                    if (Number.isNaN(parsed)) return;
+
+                    setRepeatCount(Math.max(1, parsed));
+                  }}
+                  onBlur={() => {
+                    const parsed = Number(repeatCountInput);
+                    const safeValue = Number.isNaN(parsed) ? 1 : Math.max(1, parsed);
+
+                    setRepeatCount(safeValue);
+                    setRepeatCountInput(String(safeValue));
+                  }}
+                />
+              </label>
+
+              <button type="button" onClick={applyRepeat}>
+                Apply
+              </button>
+            </div>
+          )}
+        </div>
       </div>
 
       {mode === 'edit' && (
         <div className="period-panel">
           <div className="period-chip-list">
-            {editPeriodChips.map((chip: EditPeriodChip) => {
+            {visibleEditPeriodChips.map((chip: EditPeriodChip) => {
               const isSelected =
                 selectedEditPeriod?.assetId === chip.assetId &&
                 selectedEditPeriod?.userName === chip.userName &&
@@ -1459,6 +1540,16 @@ export default function AssetCalendar({
                 </div>
               );
             })}
+
+            {isMobile && editPeriodChips.length > 1 && (
+              <button
+                type="button"
+                className="period-chip-toggle"
+                onClick={() => setChipsCollapsed((prev) => !prev)}
+              >
+                {chipsCollapsed ? `... (${hiddenEditChipCount} more)` : 'Collapse'}
+              </button>
+            )}
           </div>
         </div>
       )}
@@ -1466,7 +1557,7 @@ export default function AssetCalendar({
       {mode !== 'view' && mode !== 'edit' && (
         <div className="period-panel">
           <div className="period-chip-list">
-            {periods.map((period) => (
+            {visibleReservePeriods.map((period) => (
               <div
                 key={period.id}
                 className={`period-chip ${period.id === activePeriodId ? 'active' : ''} status-${periodStatuses[period.id]}`}
@@ -1489,6 +1580,16 @@ export default function AssetCalendar({
                 </button>
               </div>
             ))}
+
+            {isMobile && periods.length > 1 && (
+              <button
+                type="button"
+                className="period-chip-toggle"
+                onClick={() => setChipsCollapsed((prev) => !prev)}
+              >
+                {chipsCollapsed ? `... (${hiddenReserveChipCount} more)` : 'Collapse'}
+              </button>
+            )}
           </div>
         </div>
       )}
